@@ -8,3 +8,16 @@ export enum AuthProvider {
   Google = 'google',
   Apple = 'apple',
 }
+
+export enum Gender {
+  Male = 'male',
+  Female = 'female',
+  NonBinary = 'non_binary',
+  Other = 'other',
+}
+
+export enum AccountStatus {
+  Active = 'active',
+  Suspended = 'suspended',
+  Banned = 'banned',
+}
