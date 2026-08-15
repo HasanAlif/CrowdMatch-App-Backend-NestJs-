@@ -11,6 +11,7 @@ import { Model } from 'mongoose';
 
 import { User } from './schemas/user.schema';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { InitialCompleteProfileDto } from './dto/initial-complete-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { CloudinaryService } from '../utils/cloudinary/cloudinary.service';
 
@@ -73,6 +74,62 @@ export class UserService {
     return await this.userModel
       .findByIdAndUpdate(id, update, { returnDocument: 'after' })
       .exec();
+  }
+
+  async initialCompleteProfile(
+    userId: string,
+    dto: InitialCompleteProfileDto,
+    photoFile?: Express.Multer.File,
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: Record<string, unknown>;
+  }> {
+    try {
+      const currentUser = await this.userModel
+        .findById(userId)
+        .select('pictureId')
+        .lean()
+        .exec();
+
+      if (!currentUser) {
+        throw new NotFoundException('User not found');
+      }
+
+      const update: Partial<User> = {};
+      update.fullName = dto.fullName;
+      update.age = dto.age;
+      if (photoFile) {
+        if (currentUser.pictureId) {
+          await this.cloudinaryService.deleteImage(currentUser.pictureId);
+        }
+
+        const { url, publicId } = await this.cloudinaryService.uploadImage(
+          photoFile.buffer,
+          'profile-pictures',
+        );
+
+        update.picture = url;
+        update.pictureId = publicId;
+      }
+
+      const updated = await this.updateUserById(userId, update);
+
+      return {
+        success: true,
+        message: 'Profile completed successfully',
+        data: {
+          picture: updated?.picture ?? null,
+          fullName: updated?.fullName ?? null,
+          age: updated?.age ?? null,
+        },
+      };
+    } catch (err) {
+      if ((err as { status?: number }).status) throw err;
+      throw new InternalServerErrorException(
+        (err as Error).message ?? 'Failed to complete profile',
+      );
+    }
   }
 
   async updateProfile(

@@ -87,6 +87,9 @@ export class User {
   @Prop({ type: Date })
   dateOfBirth?: Date;
 
+  @Prop({ type: Number })
+  age?: number;
+
   @Prop({ type: String, maxlength: 500 })
   bio?: string;
 
