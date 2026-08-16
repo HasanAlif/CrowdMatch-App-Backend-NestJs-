@@ -63,7 +63,7 @@ export class WebsiteContentService {
   }> {
     try {
       const label = getContentTypeLabel(type);
-      const doc = await this.contentModel.findOne({ type }).exec();
+      const doc = await this.contentModel.findOne({ type }).lean().exec();
 
       if (!doc) {
         const now = new Date();

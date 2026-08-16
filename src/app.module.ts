@@ -12,6 +12,7 @@ import { AdminModule } from './admin/admin.module';
 import { CloudinaryModule } from './utils/cloudinary/cloudinary.module';
 import { WebsiteContentModule } from './website-content/website-content.module';
 import configuration from './config/configuration';
+import { MessageModule } from './message/message.module';
 
 @Module({
   imports: [
@@ -21,12 +22,10 @@ import configuration from './config/configuration';
       load: [configuration],
     }),
 
-    // Global rate-limit: 100 requests per 60 seconds per IP (default guard).
-    // Sensitive endpoints override this with stricter @Throttle() decorators.
     ThrottlerModule.forRoot([
       {
         name: 'global',
-        ttl: 60000, // 60 seconds in ms
+        ttl: 60000,
         limit: 100,
       },
     ]),
@@ -37,6 +36,9 @@ import configuration from './config/configuration';
       useFactory: (configService: ConfigService) => ({
         uri: configService.get<string>('databaseUrl'),
         maxPoolSize: 20,
+        minPoolSize: 5,
+        socketTimeoutMS: 45_000,
+        serverSelectionTimeoutMS: 10_000,
       }),
     }),
 
@@ -45,6 +47,7 @@ import configuration from './config/configuration';
     AdminModule,
     CloudinaryModule,
     WebsiteContentModule,
+    MessageModule,
   ],
   controllers: [AppController],
   providers: [

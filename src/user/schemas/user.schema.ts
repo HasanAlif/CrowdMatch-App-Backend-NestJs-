@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Types } from 'mongoose';
 import { Role, AuthProvider, Gender, AccountStatus } from '../user.types';
 
 export type UserDocument = HydratedDocument<User>;
@@ -99,13 +99,13 @@ export class User {
   @Prop({ type: [String] })
   interestedInGenders?: string[];
 
-  @Prop({ type: Number, default: 18 })
+  @Prop({ type: Number })
   minAgePreference: number;
 
-  @Prop({ type: Number, default: 99 })
+  @Prop({ type: Number })
   maxAgePreference: number;
 
-  @Prop({ type: Number, default: 50 })
+  @Prop({ type: Number })
   maxDistanceKm: number;
 
   @Prop({ type: GeoLocationSchema })
@@ -125,6 +125,15 @@ export class User {
 
   @Prop({ type: String, unique: true, sparse: true })
   displayId?: string;
+
+  @Prop({ type: Boolean, default: false })
+  isOnline: boolean;
+
+  @Prop({ type: Date })
+  lastSeen?: Date;
+
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'User' }], default: [] })
+  blockedUsers: Types.ObjectId[];
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
@@ -136,6 +145,8 @@ UserSchema.index({ accountStatus: 1 });
 UserSchema.index({ gender: 1 }, { sparse: true });
 
 UserSchema.index({ interestedInGenders: 1 }, { sparse: true });
+
+UserSchema.index({ isOnline: 1 });
 
 UserSchema.pre<UserDocument>('save', async function () {
   if (!this.displayId) {

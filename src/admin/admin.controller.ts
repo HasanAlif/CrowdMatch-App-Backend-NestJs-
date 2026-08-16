@@ -32,7 +32,12 @@ export class AdminController {
 
   // PATCH /admin/profile — update own fullName and/or picture (multipart/form-data)
   @Patch('profile')
-  @UseInterceptors(FileInterceptor('picture', { storage: memoryStorage() }))
+  @UseInterceptors(
+    FileInterceptor('picture', {
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
   updateAdminProfile(
     @UploadedFile() picture: Express.Multer.File,
     @Body() dto: UpdateAdminProfileDto,

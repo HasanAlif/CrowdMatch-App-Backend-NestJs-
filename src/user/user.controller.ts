@@ -23,7 +23,12 @@ export class UserController {
   // POST /user/initial-complete-profile — onboarding step: fullName + age + photo
   @UseGuards(AuthGuard)
   @Post('initial-complete-profile')
-  @UseInterceptors(FileInterceptor('photo', { storage: memoryStorage() }))
+  @UseInterceptors(
+    FileInterceptor('photo', {
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
   initialCompleteProfile(
     @UploadedFile() photo: Express.Multer.File,
     @Body() dto: InitialCompleteProfileDto,
@@ -36,7 +41,12 @@ export class UserController {
   // PATCH /user/profile — update profile fields and/or picture (multipart/form-data)
   @UseGuards(AuthGuard)
   @Patch('profile')
-  @UseInterceptors(FileInterceptor('picture', { storage: memoryStorage() }))
+  @UseInterceptors(
+    FileInterceptor('picture', {
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
   updateProfile(
     @UploadedFile() picture: Express.Multer.File,
     @Body() dto: UpdateProfileDto,

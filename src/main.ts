@@ -6,13 +6,17 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import helmet from 'helmet';
 import * as dns from 'dns';
 import compression from 'compression';
+import * as express from 'express';
 
 if (process.env.USE_GOOGLE_DNS === 'true') {
   dns.setServers(['8.8.8.8', '8.8.4.4']);
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
+
+  app.use(express.json({ limit: '2mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
   app.use(
     helmet({

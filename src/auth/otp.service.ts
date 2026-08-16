@@ -5,7 +5,7 @@ import { randomInt } from 'crypto';
 
 @Injectable()
 export class OtpService {
-  private readonly SALT_ROUNDS = 10;
+  private readonly SALT_ROUNDS = 6;
 
   constructor(private readonly configService: ConfigService) {}
 
