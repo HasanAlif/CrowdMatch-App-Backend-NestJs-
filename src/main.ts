@@ -57,7 +57,7 @@ async function bootstrap() {
   );
   app.useGlobalFilters(new AllExceptionsFilter());
 
-  await app.listen(process.env.PORT ?? 7000);
+  await app.listen(process.env.PORT ?? 8000);
 }
 
 bootstrap().catch((err) => {
