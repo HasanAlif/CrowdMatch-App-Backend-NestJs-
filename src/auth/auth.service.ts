@@ -40,26 +40,24 @@ export class AuthService {
   async registerWithEmail(dto: RegisterWithEmailDto) {
     try {
       const existing = await this.userService.findByEmail(dto.email);
+
       if (existing) {
         if (existing.isVerified) {
           throw new ConflictException('Email is already registered');
         }
-      }
 
-      const hashedPassword = await bcrypt.hash(dto.password, SALT_ROUNDS);
-
-      const otp = this.otpService.generateOtp();
-      const hashedOtp = await this.otpService.hashOtp(otp);
-      const otpExpiry = this.otpService.getExpiryDate();
-
-      if (existing) {
-        await this.userService.updateUserById(String(existing._id), {
+        const hashedPassword = await bcrypt.hash(dto.password, SALT_ROUNDS);
+        const otp = await this.generateAndPersistOtp(String(existing._id), {
           fullName: dto.fullName,
           password: hashedPassword,
-          otp: hashedOtp,
-          otpExpiry,
         });
+        await this.mailService.sendOtpEmail(dto.email, otp);
       } else {
+        const hashedPassword = await bcrypt.hash(dto.password, SALT_ROUNDS);
+        const otp = this.otpService.generateOtp();
+        const hashedOtp = await this.otpService.hashOtp(otp);
+        const otpExpiry = this.otpService.getExpiryDate();
+
         await this.userService.createUser({
           fullName: dto.fullName,
           email: dto.email,
@@ -69,9 +67,8 @@ export class AuthService {
           isVerified: false,
           isActive: true,
         });
+        await this.mailService.sendOtpEmail(dto.email, otp);
       }
-
-      await this.mailService.sendOtpEmail(dto.email, otp);
 
       return {
         success: true,
@@ -98,27 +95,34 @@ export class AuthService {
   async registerWithPhoneNumber(dto: RegisterWithPhoneDto) {
     try {
       const existing = await this.userService.findByPhone(dto.phone);
+
       if (existing) {
-        throw new ConflictException('Phone number is already registered');
+        if (existing.isVerified) {
+          throw new ConflictException('Phone number is already registered');
+        }
+        const hashedPassword = await bcrypt.hash(dto.password, SALT_ROUNDS);
+        const otp = await this.generateAndPersistOtp(String(existing._id), {
+          fullName: dto.fullName,
+          password: hashedPassword,
+        });
+        await this.smsService.sendOtpSms(dto.phone, otp);
+      } else {
+        const hashedPassword = await bcrypt.hash(dto.password, SALT_ROUNDS);
+        const otp = this.otpService.generateOtp();
+        const hashedOtp = await this.otpService.hashOtp(otp);
+        const otpExpiry = this.otpService.getExpiryDate();
+
+        await this.userService.createUser({
+          fullName: dto.fullName,
+          phoneNumber: dto.phone,
+          password: hashedPassword,
+          otp: hashedOtp,
+          otpExpiry,
+          isVerified: false,
+          isActive: true,
+        });
+        await this.smsService.sendOtpSms(dto.phone, otp);
       }
-
-      const hashedPassword = await bcrypt.hash(dto.password, SALT_ROUNDS);
-
-      const otp = this.otpService.generateOtp();
-      const hashedOtp = await this.otpService.hashOtp(otp);
-      const otpExpiry = this.otpService.getExpiryDate();
-
-      await this.userService.createUser({
-        fullName: dto.fullName,
-        phoneNumber: dto.phone,
-        password: hashedPassword,
-        otp: hashedOtp,
-        otpExpiry,
-        isVerified: false,
-        isActive: true,
-      });
-
-      await this.smsService.sendOtpSms(dto.phone, otp);
 
       return {
         success: true,
@@ -246,16 +250,7 @@ export class AuthService {
       if (user.isVerified) {
         throw new BadRequestException('Account is already verified');
       }
-
-      const otp = this.otpService.generateOtp();
-      const hashedOtp = await this.otpService.hashOtp(otp);
-      const otpExpiry = this.otpService.getExpiryDate();
-
-      await this.userService.updateUserById(String(user._id), {
-        otp: hashedOtp,
-        otpExpiry,
-      });
-
+      const otp = await this.generateAndPersistOtp(String(user._id));
       if (user.email && dto.email && user.email === dto.email) {
         await this.mailService.sendOtpEmail(user.email, otp);
         return {
@@ -556,5 +551,22 @@ export class AuthService {
         error: err.message,
       });
     }
+  }
+
+  private async generateAndPersistOtp(
+    userId: string,
+    extraUpdate: Partial<import('../user/schemas/user.schema').User> = {},
+  ): Promise<string> {
+    const otp = this.otpService.generateOtp();
+    const hashedOtp = await this.otpService.hashOtp(otp);
+    const otpExpiry = this.otpService.getExpiryDate();
+
+    await this.userService.updateUserById(userId, {
+      ...extraUpdate,
+      otp: hashedOtp,
+      otpExpiry,
+    });
+
+    return otp;
   }
 }
