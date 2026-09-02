@@ -2,143 +2,141 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import axios, { AxiosError } from 'axios';
+import { Twilio, RestException } from 'twilio';
 
-interface SmsToSendResponse {
-  success: boolean;
-  message?: string;
-  status?: string;
-  failed_reason?: string | null;
-  internal_failed_reason?: string | null;
+function validateAlphaSenderId(id: string): string | null {
+  if (!id || id.trim().length === 0) {
+    return 'TWILIO_ALPHA_SENDER_ID must not be empty.';
+  }
+  if (id.length > 11) {
+    return `TWILIO_ALPHA_SENDER_ID "${id}" is ${id.length} chars — Twilio requires ≤11 characters.`;
+  }
+  if (!/[a-zA-Z]/.test(id)) {
+    return `TWILIO_ALPHA_SENDER_ID "${id}" contains no letters — all-digit or all-symbol sender IDs are not permitted as alphanumeric IDs.`;
+  }
+  return null;
 }
 
-const FAILURE_STATUSES = new Set(['REJECTED', 'FAILED']);
-
-const SUCCESS_STATUSES = new Set(['DONE', 'SCHEDULED', 'PENDING']);
-
 @Injectable()
-export class SmsService {
+export class SmsService implements OnModuleInit {
   private readonly logger = new Logger(SmsService.name);
-  private readonly apiKey: string;
-  private readonly senderId: string;
+
+  private readonly accountSid: string;
+  private readonly authToken: string;
+  private _twilioClient: Twilio | undefined;
+
+  private readonly from: string;
+
+  private readonly usingAlphaSender: boolean;
 
   constructor(private readonly configService: ConfigService) {
-    this.apiKey = this.configService.get<string>('smsto.apiKey') ?? '';
-    this.senderId = this.configService.get<string>('smsto.senderId') ?? 'SMSto';
+    this.accountSid = this.configService.get<string>('twilio.accountSid') ?? '';
+    this.authToken = this.configService.get<string>('twilio.authToken') ?? '';
+
+    const phoneNumber = this.configService.get<string>('twilio.phoneNumber');
+
+    if (phoneNumber) {
+      this.from = phoneNumber;
+      this.usingAlphaSender = false;
+    } else {
+      this.from =
+        this.configService.get<string>('twilio.alphaSenderId') ?? 'CrowdMatch';
+      this.usingAlphaSender = true;
+    }
+  }
+
+  private get twilioClient(): Twilio {
+    if (!this._twilioClient) {
+      this._twilioClient = new Twilio(this.accountSid, this.authToken);
+    }
+    return this._twilioClient;
+  }
+
+  onModuleInit(): void {
+    if (this.usingAlphaSender) {
+      const validationError = validateAlphaSenderId(this.from);
+      if (validationError) {
+        throw new Error(
+          `[SmsService] Invalid alphanumeric sender ID — ${validationError} ` +
+            `Set a valid TWILIO_ALPHA_SENDER_ID (≤11 chars, must contain at least one letter) ` +
+            `or set TWILIO_PHONE_NUMBER to use a real E.164 number instead.`,
+        );
+      }
+      this.logger.log(`[Twilio] Using alphanumeric sender ID: "${this.from}"`);
+    } else {
+      this.logger.log(`[Twilio] Using phone number as sender: ${this.from}`);
+    }
   }
 
   async sendOtpSms(toPhoneNumber: string, otp: string): Promise<void> {
     const expiryMinutes =
       this.configService.get<number>('otp.expiresInMinutes') ?? 5;
 
-    const messageBody = `Your verification code is: ${otp}. It expires in ${expiryMinutes} minutes. Do not share it with anyone.`;
+    const body = `Your verification code is: ${otp}. It expires in ${expiryMinutes} minutes. Do not share it with anyone.`;
 
     try {
-      const response = await axios.post<SmsToSendResponse>(
-        'https://api.sms.to/sms/send',
-        {
-          to: toPhoneNumber,
-          message: messageBody,
-          sender_id: this.senderId,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-        },
+      const message = await this.twilioClient.messages.create({
+        body,
+        from: this.from,
+        to: toPhoneNumber,
+      });
+
+      this.logger.log(
+        `[Twilio] SMS accepted for ${toPhoneNumber} — SID: ${message.sid}, status: ${message.status}`,
       );
-
-      const data = response.data;
-
-      if (data.success === false) {
-        const reason = data.message ?? 'sms.to returned success: false';
-        this.logger.error(
-          `[sms.to] Message rejected by API (success=false): ${reason}`,
-        );
-        throw new InternalServerErrorException({
-          success: false,
-          message: 'Failed to send OTP SMS',
-          error: reason,
-        });
-      }
-
-      if (data.status && FAILURE_STATUSES.has(data.status)) {
-        const reason =
-          data.failed_reason ??
-          data.internal_failed_reason ??
-          `sms.to message status: ${data.status}`;
-        this.logger.error(
-          `[sms.to] Message status indicates failure: ${data.status} — ${reason}`,
-        );
-        throw new InternalServerErrorException({
-          success: false,
-          message: 'Failed to send OTP SMS',
-          error: reason,
-        });
-      }
-
-      const acceptedStatus = data.status ?? 'unknown';
-      if (
-        !SUCCESS_STATUSES.has(acceptedStatus) &&
-        acceptedStatus !== 'unknown'
-      ) {
-        this.logger.warn(
-          `[sms.to] Unexpected message status: ${acceptedStatus}. Treating as accepted.`,
-        );
-      } else {
-        this.logger.log(
-          `[sms.to] SMS accepted for ${toPhoneNumber} — status: ${acceptedStatus}`,
-        );
-      }
     } catch (error) {
-      if (error instanceof InternalServerErrorException) {
-        throw error;
-      }
+      if (error instanceof RestException) {
+        const { status, code, message: twilioMessage } = error;
 
-      const axiosErr = error as AxiosError<{
-        message?: string;
-        error?: string;
-      }>;
-
-      if (axiosErr.isAxiosError) {
-        const statusCode = axiosErr.response?.status;
-        const responseBody = axiosErr.response?.data;
-        const apiMessage =
-          responseBody?.message ?? responseBody?.error ?? axiosErr.message;
-
-        if (statusCode === 401 || statusCode === 403 || statusCode === 412) {
+        if (code === 21612) {
+          // 21612 — "The 'From' phone number provided is not a valid, SMS-capable Twilio phone number."
           this.logger.error(
-            `[sms.to] Authentication error (HTTP ${statusCode}): invalid API key or insufficient permissions. ` +
-              `Check SMS_TO_API_KEY in your .env. Response: ${JSON.stringify(responseBody)}`,
+            `[Twilio] The sender "${this.from}" is not a valid or SMS-capable number/sender ID ` +
+              `registered on this Twilio account. ` +
+              `If using an alphanumeric sender, ensure the Alphanumeric Sender ID feature is enabled ` +
+              `on your account and that the destination country supports it. ` +
+              `Twilio error ${code} (HTTP ${status}): ${twilioMessage}`,
           );
-        } else if (statusCode === 422) {
+        } else if (code === 21408 || code === 21215) {
+          // 21408 — Permission to send SMS to given country is not enabled.
+          // 21215 — Account not permitted to send SMS to the given number.
           this.logger.error(
-            `[sms.to] Validation error (HTTP 422): likely invalid phone number format or missing field. ` +
-              `Response: ${JSON.stringify(responseBody)}`,
+            `[Twilio] Destination country or number not permitted. ` +
+              `Alphanumeric senders are unsupported in some regions (e.g. US, Canada) — ` +
+              `set TWILIO_PHONE_NUMBER to use a real E.164 number for broader reach. ` +
+              `Twilio error ${code} (HTTP ${status}): ${twilioMessage}`,
           );
-        } else if (statusCode === 402) {
+        } else if (status === 401) {
           this.logger.error(
-            `[sms.to] Insufficient balance (HTTP 402): top up your sms.to account. ` +
-              `Response: ${JSON.stringify(responseBody)}`,
+            `[Twilio] Authentication failed (HTTP 401). ` +
+              `Check that TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN are correct. ` +
+              `Twilio error ${code}: ${twilioMessage}`,
+          );
+        } else if (status === 429) {
+          this.logger.error(
+            `[Twilio] Rate limit exceeded (HTTP 429). ` +
+              `Twilio error ${code}: ${twilioMessage}`,
           );
         } else {
           this.logger.error(
-            `[sms.to] HTTP error ${statusCode ?? 'network'}: ${apiMessage}`,
+            `[Twilio] API error sending SMS to ${toPhoneNumber}. ` +
+              `Twilio error ${code} (HTTP ${status}): ${twilioMessage}`,
           );
         }
 
         throw new InternalServerErrorException({
           success: false,
           message: 'Failed to send OTP SMS',
-          error: apiMessage,
+          error: twilioMessage,
         });
       }
-
       const err = error as Error;
-      this.logger.error(`[sms.to] Unexpected error: ${err.message}`);
+      this.logger.error(
+        `[Twilio] Unexpected error sending SMS to ${toPhoneNumber}: ${err.message}`,
+      );
       throw new InternalServerErrorException({
         success: false,
         message: 'Failed to send OTP SMS',

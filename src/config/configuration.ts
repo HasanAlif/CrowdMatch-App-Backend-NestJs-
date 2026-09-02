@@ -41,9 +41,11 @@ export default () => {
       bundleId: process.env.APPLE_BUNDLE_ID,
     },
 
-    smsto: {
-      apiKey: process.env.SMS_TO_API_KEY,
-      senderId: process.env.SMS_TO_SENDER_ID,
+    twilio: {
+      accountSid: process.env.TWILIO_ACCOUNT_SID,
+      authToken: process.env.TWILIO_AUTH_TOKEN,
+      phoneNumber: process.env.TWILIO_PHONE_NUMBER,
+      alphaSenderId: process.env.TWILIO_ALPHA_SENDER_ID,
     },
   };
 };
