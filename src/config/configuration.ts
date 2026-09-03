@@ -43,6 +43,8 @@ export default () => {
 
     twilio: {
       accountSid: process.env.TWILIO_ACCOUNT_SID,
+      apiKey: process.env.TWILIO_API_KEY,
+      apiSecret: process.env.TWILIO_API_SECRET,
       authToken: process.env.TWILIO_AUTH_TOKEN,
       phoneNumber: process.env.TWILIO_PHONE_NUMBER,
       alphaSenderId: process.env.TWILIO_ALPHA_SENDER_ID,

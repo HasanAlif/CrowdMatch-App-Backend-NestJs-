@@ -24,17 +24,24 @@ function validateAlphaSenderId(id: string): string | null {
 export class SmsService implements OnModuleInit {
   private readonly logger = new Logger(SmsService.name);
 
-  private readonly accountSid: string;
-  private readonly authToken: string;
-  private _twilioClient: Twilio | undefined;
+  private readonly client: Twilio;
 
   private readonly from: string;
 
   private readonly usingAlphaSender: boolean;
 
   constructor(private readonly configService: ConfigService) {
-    this.accountSid = this.configService.get<string>('twilio.accountSid') ?? '';
-    this.authToken = this.configService.get<string>('twilio.authToken') ?? '';
+    const accountSid =
+      this.configService.get<string>('twilio.accountSid') ?? '';
+    const apiKey = this.configService.get<string>('twilio.apiKey');
+    const apiSecret = this.configService.get<string>('twilio.apiSecret');
+    const authToken = this.configService.get<string>('twilio.authToken') ?? '';
+
+    if (apiKey && apiSecret) {
+      this.client = new Twilio(apiKey, apiSecret, { accountSid });
+    } else {
+      this.client = new Twilio(accountSid, authToken);
+    }
 
     const phoneNumber = this.configService.get<string>('twilio.phoneNumber');
 
@@ -46,13 +53,6 @@ export class SmsService implements OnModuleInit {
         this.configService.get<string>('twilio.alphaSenderId') ?? 'CrowdMatch';
       this.usingAlphaSender = true;
     }
-  }
-
-  private get twilioClient(): Twilio {
-    if (!this._twilioClient) {
-      this._twilioClient = new Twilio(this.accountSid, this.authToken);
-    }
-    return this._twilioClient;
   }
 
   onModuleInit(): void {
@@ -78,7 +78,7 @@ export class SmsService implements OnModuleInit {
     const body = `Your verification code is: ${otp}. It expires in ${expiryMinutes} minutes. Do not share it with anyone.`;
 
     try {
-      const message = await this.twilioClient.messages.create({
+      const message = await this.client.messages.create({
         body,
         from: this.from,
         to: toPhoneNumber,
@@ -92,7 +92,6 @@ export class SmsService implements OnModuleInit {
         const { status, code, message: twilioMessage } = error;
 
         if (code === 21612) {
-          // 21612 — "The 'From' phone number provided is not a valid, SMS-capable Twilio phone number."
           this.logger.error(
             `[Twilio] The sender "${this.from}" is not a valid or SMS-capable number/sender ID ` +
               `registered on this Twilio account. ` +
@@ -101,8 +100,6 @@ export class SmsService implements OnModuleInit {
               `Twilio error ${code} (HTTP ${status}): ${twilioMessage}`,
           );
         } else if (code === 21408 || code === 21215) {
-          // 21408 — Permission to send SMS to given country is not enabled.
-          // 21215 — Account not permitted to send SMS to the given number.
           this.logger.error(
             `[Twilio] Destination country or number not permitted. ` +
               `Alphanumeric senders are unsupported in some regions (e.g. US, Canada) — ` +
@@ -112,7 +109,7 @@ export class SmsService implements OnModuleInit {
         } else if (status === 401) {
           this.logger.error(
             `[Twilio] Authentication failed (HTTP 401). ` +
-              `Check that TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN are correct. ` +
+              `Check TWILIO_ACCOUNT_SID and TWILIO_API_KEY/TWILIO_API_SECRET. ` +
               `Twilio error ${code}: ${twilioMessage}`,
           );
         } else if (status === 429) {
