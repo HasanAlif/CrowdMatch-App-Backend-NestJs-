@@ -13,6 +13,7 @@ import { CloudinaryModule } from './utils/cloudinary/cloudinary.module';
 import { WebsiteContentModule } from './website-content/website-content.module';
 import configuration from './config/configuration';
 import { MessageModule } from './message/message.module';
+import { MatchingModule } from './matching/matching.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 
 @Module({
@@ -49,6 +50,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
     CloudinaryModule,
     WebsiteContentModule,
     MessageModule,
+    MatchingModule,
     EventEmitterModule.forRoot(),
   ],
   controllers: [AppController],
