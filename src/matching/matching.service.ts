@@ -1164,4 +1164,15 @@ export class MatchingService {
       voteType,
     };
   }
+
+  // MY VOTE COUNT  —  GET /matching/mine/vote-count
+
+  /** Total votes this user has ever cast, across every match, expired or not. */
+  async getMyVoteCount(userId: string): Promise<{ totalVotes: number }> {
+    const totalVotes = await this.voteModel.countDocuments({
+      voter: new Types.ObjectId(userId),
+    });
+
+    return { totalVotes };
+  }
 }

@@ -17,11 +17,12 @@ import { CastVoteDto } from './dto/cast-vote.dto';
 
 /**
  * Route ordering:
- *   1. GET  /matching/mine           ← static (must be before :id)
- *   2. GET  /matching/mine/accepted  ← static
- *   3. GET  /matching                ← root — voting feed
- *   4. PATCH /matching/:id/decision
- *   5. POST /matching/vote?matchId=<id>
+ *   1. GET  /matching/mine             ← static (must be before :id)
+ *   2. GET  /matching/mine/accepted    ← static
+ *   3. GET  /matching/mine/vote-count  ← static
+ *   4. GET  /matching                  ← root — voting feed
+ *   5. PATCH /matching/:id/decision
+ *   6. POST /matching/vote?matchId=<id>
  */
 @UseGuards(AuthGuard)
 @Controller('matching')
@@ -96,7 +97,24 @@ export class MatchingController {
     };
   }
 
-  // ── 3. GET /matching — public voting feed ──
+  // ── 3. GET /matching/mine/vote-count — total votes I've given ──
+  @Get('mine/vote-count')
+  async getMyVoteCount(@Request() req: any): Promise<{
+    success: boolean;
+    message: string;
+    data: { totalVotes: number };
+  }> {
+    const userId = req.user.sub as string;
+    const { totalVotes } = await this.matchingService.getMyVoteCount(userId);
+
+    return {
+      success: true,
+      message: 'Your vote count retrieved successfully',
+      data: { totalVotes },
+    };
+  }
+
+  // ── 4. GET /matching — public voting feed ──
   @Get()
   async getVotingFeed(
     @Query() query: PaginationDto,
@@ -128,7 +146,7 @@ export class MatchingController {
     };
   }
 
-  // ── 4. PATCH /matching/:id/decision ──
+  // ── 5. PATCH /matching/:id/decision ──
   @Patch(':id/decision')
   async updateDecision(
     @Param('id') matchId: string,
@@ -153,7 +171,7 @@ export class MatchingController {
     };
   }
 
-  // ── 5. POST /matching/vote?matchId=<id> ──
+  // ── 6. POST /matching/vote?matchId=<id> ──
   @Post('vote')
   async castVote(
     @Query('matchId') matchId: string,
