@@ -97,20 +97,23 @@ export class MatchingController {
     };
   }
 
-  // ── 3. GET /matching/mine/vote-count — total votes I've given ──
+  // ── 3. GET /matching/mine/vote-count — cycle progress + next milestone ──
   @Get('mine/vote-count')
   async getMyVoteCount(@Request() req: any): Promise<{
     success: boolean;
     message: string;
-    data: { totalVotes: number };
+    data: {
+      currentVotes: number;
+      nextTargetVotes: number;
+    };
   }> {
     const userId = req.user.sub as string;
-    const { totalVotes } = await this.matchingService.getMyVoteCount(userId);
+    const data = await this.matchingService.getMyVoteCount(userId);
 
     return {
       success: true,
       message: 'Your vote count retrieved successfully',
-      data: { totalVotes },
+      data,
     };
   }
 

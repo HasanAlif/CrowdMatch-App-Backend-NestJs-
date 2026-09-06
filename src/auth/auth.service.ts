@@ -24,7 +24,9 @@ import { VerifyForgotPasswordOtpDto } from './dto/verifyForgotPasswordOtp.dto';
 import { ResetPasswordDto } from './dto/resetPassword.dto';
 import { RegisterWithPhoneDto } from './dto/registerPhone.dto';
 
-const SALT_ROUNDS = 10;
+// Exported so the demo seed hashes passwords with the exact same cost factor real
+// registration uses — a seeded user that cannot log in is a useless seeded user.
+export const SALT_ROUNDS = 10;
 
 @Injectable()
 export class AuthService {

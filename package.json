@@ -21,8 +21,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "seed:admin": "ts-node -r tsconfig-paths/register src/admin/seedAdmin.ts",
     "seed:demo": "ts-node -r tsconfig-paths/register src/scripts/seed-demo.ts",
-    "migrate:drop-stale-indexes": "ts-node -r tsconfig-paths/register src/matching/scripts/drop-stale-indexes.ts",
-    "test:scale": "RUN_GENERATION_SCALE=1 jest --config ./jest-int.config.js --runInBand src/matching/matching-generation.int-spec.ts"
+    "migrate:vote-counters": "ts-node -r tsconfig-paths/register src/scripts/migrate-vote-counters.ts",
+    "test:scale": "RUN_FEED_SCALE=1 jest --config ./jest-int.config.js --runInBand src/matching/voting-feed-scale.int-spec.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
@@ -107,7 +107,7 @@
       "^src/(.*)$": "<rootDir>/$1"
     },
     "transformIgnorePatterns": [
-      "/node_modules/(?!@nestjs/event-emitter)"
+      "/node_modules/(?!(@nestjs/event-emitter|@faker-js/faker))"
     ]
   },
   "overrides": {

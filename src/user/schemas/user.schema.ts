@@ -115,7 +115,16 @@ export class User {
   accountStatus: AccountStatus;
 
   @Prop({ type: Number, default: 0 })
-  voteCount: number;
+  totalVotes: number;
+
+  @Prop({ type: Number, default: 0 })
+  currentVotes: number;
+
+  @Prop({ type: Date })
+  boostExpiresAt?: Date;
+
+  @Prop({ type: Date })
+  pictureUpdateExpiresAt?: Date;
 
   @Prop({ type: Number, default: 0 })
   matchCount: number;
@@ -147,6 +156,8 @@ UserSchema.index({ gender: 1 }, { sparse: true });
 UserSchema.index({ interestedInGenders: 1 }, { sparse: true });
 
 UserSchema.index({ isOnline: 1 });
+
+UserSchema.index({ boostExpiresAt: 1 }, { sparse: true });
 
 UserSchema.pre<UserDocument>('save', async function () {
   if (!this.displayId) {

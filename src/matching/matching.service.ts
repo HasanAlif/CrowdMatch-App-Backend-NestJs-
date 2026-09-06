@@ -15,8 +15,21 @@ import { MatchCycleCheckpoint } from './schemas/match-cycle-checkpoint.schema';
 import { MatchedPair, PairOutcome } from './schemas/matched-pair.schema';
 import { User } from '../user/schemas/user.schema';
 import { AccountStatus } from '../user/user.types';
+import {
+  BOOST_DURATION_MS,
+  BOOST_THRESHOLDS,
+  nextTargetVotes,
+  PICTURE_WINDOW_MS,
+  REWARD_EXTRA_MATCH,
+  VOTE_CYCLE_LENGTH,
+} from '../common/vote-thresholds';
 
 const SOFT_MAX_MATCHES_PER_CYCLE = 2;
+
+const MAX_BOOSTED_USERS_PER_FEED = 200;
+
+const MAX_BOOSTED_MATCHES_PER_FEED =
+  MAX_BOOSTED_USERS_PER_FEED * SOFT_MAX_MATCHES_PER_CYCLE;
 
 const BACKFILL_BATCH_SIZE = 1000;
 
@@ -141,26 +154,40 @@ export class MatchingService {
 
   // MATCH GENERATION ALGORITHM
 
+  private eligibleUserFilter(): Record<string, unknown> {
+    return {
+      isVerified: true,
+      accountStatus: AccountStatus.Active,
+      gender: { $exists: true, $ne: null },
+      interestedInGenders: { $exists: true, $not: { $size: 0 } },
+      geoLocation: { $exists: true, $ne: null },
+      maxDistanceKm: { $exists: true, $ne: null },
+      minAgePreference: { $exists: true, $ne: null },
+      maxAgePreference: { $exists: true, $ne: null },
+      'photos.0': { $exists: true },
+      $or: [
+        { age: { $exists: true, $ne: null } },
+        { dateOfBirth: { $exists: true, $ne: null } },
+      ],
+    };
+  }
+
   private async getEligibleUsers(): Promise<EligibleUser[]> {
     return this.userModel
-      .find({
-        isVerified: true,
-        accountStatus: AccountStatus.Active,
-        gender: { $exists: true, $ne: null },
-        interestedInGenders: { $exists: true, $not: { $size: 0 } },
-        geoLocation: { $exists: true, $ne: null },
-        maxDistanceKm: { $exists: true, $ne: null },
-        minAgePreference: { $exists: true, $ne: null },
-        maxAgePreference: { $exists: true, $ne: null },
-        'photos.0': { $exists: true },
-        $or: [
-          { age: { $exists: true, $ne: null } },
-          { dateOfBirth: { $exists: true, $ne: null } },
-        ],
-      })
+      .find(this.eligibleUserFilter())
       .select(ELIGIBLE_USER_FIELDS)
       .lean<EligibleUser[]>()
       .exec();
+  }
+
+  private async getEligibleUserIds(): Promise<Set<string>> {
+    const rows = await this.userModel
+      .find(this.eligibleUserFilter())
+      .select('_id')
+      .lean()
+      .exec();
+
+    return new Set(rows.map((r) => r._id.toString()));
   }
 
   private async findCompatibleCandidates(
@@ -713,6 +740,65 @@ export class MatchingService {
     return votes.map((v) => v.match);
   }
 
+  private async findBoostedMatchIds(
+    userOid: Types.ObjectId,
+    votedIds: Types.ObjectId[],
+  ): Promise<Types.ObjectId[]> {
+    const now = new Date();
+
+    const boostedUsers = await this.userModel
+      .find({ boostExpiresAt: { $gt: now } })
+      .select('_id')
+      .sort({ boostExpiresAt: -1 })
+      .limit(MAX_BOOSTED_USERS_PER_FEED)
+      .lean()
+      .exec();
+
+    if (boostedUsers.length === 0) return [];
+
+    const boostedUserIds = boostedUsers.map((u) => u._id);
+
+    const filter: Record<string, unknown> = {
+      isExpired: false,
+      $or: [
+        { user1: { $in: boostedUserIds } },
+        { user2: { $in: boostedUserIds } },
+      ],
+      user1: { $ne: userOid },
+      user2: { $ne: userOid },
+    };
+    if (votedIds.length > 0) {
+      filter._id = { $nin: votedIds };
+    }
+
+    const rows = await this.matchModel
+      .find(filter)
+      .select('_id')
+      .sort({ createdAt: -1 })
+      .limit(MAX_BOOSTED_MATCHES_PER_FEED)
+      .lean()
+      .exec();
+
+    return rows.map((r) => r._id);
+  }
+
+  private mapFeedRows(rows: any[]): unknown[] {
+    return rows.map((match: any) => ({
+      matchId: match._id,
+      user1: {
+        id: match.user1?._id,
+        photo: match.user1?.photos?.[0] ?? null,
+      },
+      user2: {
+        id: match.user2?._id,
+        photo: match.user2?.photos?.[0] ?? null,
+      },
+      totalVoteCount: match.totalVoteCount,
+      positiveVoteCount: match.positiveVoteCount,
+      negativeVoteCount: match.negativeVoteCount,
+    }));
+  }
+
   async getVotingFeed(
     userId: string,
     page: number,
@@ -727,44 +813,65 @@ export class MatchingService {
     const userOid = new Types.ObjectId(userId);
     const votedIds = await this.getVotedMatchIdsThisCycle(userOid);
 
-    const filter: Record<string, unknown> = {
+    const baseFilter: Record<string, unknown> = {
       isExpired: false,
       user1: { $ne: userOid },
       user2: { $ne: userOid },
     };
     if (votedIds.length > 0) {
-      filter._id = { $nin: votedIds };
+      baseFilter._id = { $nin: votedIds };
     }
-    const [total, rows] = await Promise.all([
-      this.matchModel.countDocuments(filter),
+
+    const boostedIds = await this.findBoostedMatchIds(userOid, votedIds);
+    const boostedCount = boostedIds.length;
+
+    const mainFilter: Record<string, unknown> = { ...baseFilter };
+    if (boostedCount > 0) {
+      mainFilter._id = {
+        $nin: votedIds.length > 0 ? [...votedIds, ...boostedIds] : boostedIds,
+      };
+    }
+
+    const runMain = (skip: number, take: number) =>
       this.matchModel
-        .find(filter)
+        .find(mainFilter)
         .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
+        .skip(skip)
+        .limit(take)
         .populate({ path: 'user1', select: '_id photos' })
         .populate({ path: 'user2', select: '_id photos' })
         .lean()
-        .exec(),
-    ]);
+        .exec();
 
-    const matches = rows.map((match: any) => ({
-      matchId: match._id,
-      user1: {
-        id: match.user1?._id,
-        photo: match.user1?.photos?.[0] ?? null,
-      },
-      user2: {
-        id: match.user2?._id,
-        photo: match.user2?.photos?.[0] ?? null,
-      },
-      totalVoteCount: match.totalVoteCount,
-      positiveVoteCount: match.positiveVoteCount,
-      negativeVoteCount: match.negativeVoteCount,
-    }));
+    const skip = (page - 1) * limit;
+
+    const totalPromise = this.matchModel.countDocuments(baseFilter);
+
+    let rows: any[];
+
+    if (skip < boostedCount) {
+      const pageBoostedIds = boostedIds.slice(skip, skip + limit);
+
+      const boostedRows = await this.matchModel
+        .find({ _id: { $in: pageBoostedIds } })
+        .sort({ createdAt: -1 })
+        .populate({ path: 'user1', select: '_id photos' })
+        .populate({ path: 'user2', select: '_id photos' })
+        .lean()
+        .exec();
+
+      const remainder = limit - boostedRows.length;
+      const topUp = remainder > 0 ? await runMain(0, remainder) : [];
+
+      rows = [...boostedRows, ...topUp];
+    } else {
+      rows = await runMain(skip - boostedCount, limit);
+    }
+
+    const total = await totalPromise;
 
     return {
-      matches,
+      matches: this.mapFeedRows(rows),
       total,
       page,
       limit,
@@ -1158,6 +1265,8 @@ export class MatchingService {
       .findByIdAndUpdate(matchId, { $inc: incUpdate })
       .exec();
 
+    await this.applyVoteRewards(voterOid);
+
     return {
       voteId: vote._id.toString(),
       matchId,
@@ -1165,14 +1274,195 @@ export class MatchingService {
     };
   }
 
+  private async applyVoteRewards(
+    voterOid: Types.ObjectId,
+  ): Promise<number | null> {
+    const now = Date.now();
+    const boostUntil = new Date(now + BOOST_DURATION_MS);
+    const pictureWindowUntil = new Date(now + PICTURE_WINDOW_MS);
+
+    const incremented = { $add: [{ $ifNull: ['$currentVotes', 0] }, 1] };
+    const cycleComplete = { $gte: [incremented, VOTE_CYCLE_LENGTH] };
+
+    const before = await this.userModel
+      .findOneAndUpdate(
+        { _id: voterOid },
+        [
+          {
+            $set: {
+              totalVotes: { $add: [{ $ifNull: ['$totalVotes', 0] }, 1] },
+
+              currentVotes: { $cond: [cycleComplete, 0, incremented] },
+
+              pictureUpdateExpiresAt: {
+                $cond: [
+                  cycleComplete,
+                  pictureWindowUntil,
+                  { $ifNull: ['$pictureUpdateExpiresAt', '$$REMOVE'] },
+                ],
+              },
+
+              boostExpiresAt: {
+                $cond: [
+                  { $in: [incremented, BOOST_THRESHOLDS] },
+                  boostUntil,
+                  { $ifNull: ['$boostExpiresAt', '$$REMOVE'] },
+                ],
+              },
+            },
+          },
+        ],
+        {
+          returnDocument: 'before',
+          updatePipeline: true,
+          projection: { currentVotes: 1, totalVotes: 1 },
+        },
+      )
+      .lean()
+      .exec();
+
+    if (!before) {
+      this.logger.warn(
+        `Vote counters not applied — voter ${voterOid.toString()} no longer exists`,
+      );
+      return null;
+    }
+
+    const newCurrent = (before.currentVotes ?? 0) + 1;
+
+    if (newCurrent === REWARD_EXTRA_MATCH) {
+      void this.generateBonusMatchForUser(voterOid).catch((err) =>
+        this.logger.error(
+          `Bonus match generation failed for ${voterOid.toString()}`,
+          err instanceof Error ? err.stack : String(err),
+        ),
+      );
+    }
+
+    return newCurrent;
+  }
+
+  private async generateBonusMatchForUser(
+    userOid: Types.ObjectId,
+  ): Promise<void> {
+    const tag = `Bonus match [${userOid.toString()}]`;
+
+    const user = await this.userModel
+      .findOne({ _id: userOid, ...this.eligibleUserFilter() })
+      .select(ELIGIBLE_USER_FIELDS)
+      .lean<EligibleUser>()
+      .exec();
+
+    if (!user) {
+      this.logger.log(`${tag}: user is not match-eligible — skipping`);
+      return;
+    }
+
+    const cycleMatch = await this.matchModel
+      .findOne({ isExpired: false })
+      .select('expiresAt')
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    if (!cycleMatch?.expiresAt) {
+      this.logger.log(`${tag}: no active cycle — skipping`);
+      return;
+    }
+
+    const allEligibleIds = await this.getEligibleUserIds();
+
+    const [activeMatches, rejectedPairs] = await Promise.all([
+      this.matchModel
+        .find({
+          isExpired: false,
+          $or: [{ user1: userOid }, { user2: userOid }],
+        })
+        .select('user1 user2')
+        .lean()
+        .exec(),
+      this.matchedPairModel
+        .find({
+          outcome: PairOutcome.Rejected,
+          $or: [{ user1: userOid }, { user2: userOid }],
+        })
+        .select('user1 user2')
+        .lean()
+        .exec(),
+    ]);
+
+    const toKeys = (
+      docs: Array<{ user1: Types.ObjectId; user2: Types.ObjectId }>,
+    ) => {
+      const set = new Set<string>();
+      for (const d of docs) {
+        const [a, b] = this.normalisePair(d.user1, d.user2);
+        set.add(`${a.toString()}:${b.toString()}`);
+      }
+      return set;
+    };
+
+    const compatible = await this.findCompatibleCandidates(
+      user,
+      allEligibleIds,
+      toKeys(activeMatches),
+      toKeys(rejectedPairs),
+    );
+
+    if (compatible.length === 0) {
+      this.logger.log(`${tag}: no compatible candidate — skipping`);
+      return;
+    }
+
+    const chosen = compatible[Math.floor(Math.random() * compatible.length)];
+    const [u1, u2] = this.normalisePair(userOid, chosen);
+
+    try {
+      await this.matchModel.create({
+        user1: u1,
+        user2: u2,
+        user1Decision: MatchDecision.Pending,
+        user2Decision: MatchDecision.Pending,
+        matchStatus: MatchStatus.Pending,
+        totalVoteCount: 0,
+        positiveVoteCount: 0,
+        negativeVoteCount: 0,
+        isExpired: false,
+        expiresAt: cycleMatch.expiresAt,
+      });
+    } catch (err: any) {
+      if (err?.code === 11000) {
+        this.logger.log(`${tag}: pair already active — skipping`);
+        return;
+      }
+      throw err;
+    }
+
+    await this.recordPairsMatched([[u1, u2]]);
+
+    this.logger.log(`${tag}: paired with ${chosen.toString()}`);
+  }
+
   // MY VOTE COUNT  —  GET /matching/mine/vote-count
+  async getMyVoteCount(userId: string): Promise<{
+    currentVotes: number;
+    nextTargetVotes: number;
+  }> {
+    const user = await this.userModel
+      .findById(userId)
+      .select('totalVotes currentVotes')
+      .lean()
+      .exec();
 
-  /** Total votes this user has ever cast, across every match, expired or not. */
-  async getMyVoteCount(userId: string): Promise<{ totalVotes: number }> {
-    const totalVotes = await this.voteModel.countDocuments({
-      voter: new Types.ObjectId(userId),
-    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
 
-    return { totalVotes };
+    const currentVotes = user.currentVotes ?? 0;
+
+    return {
+      currentVotes,
+      nextTargetVotes: nextTargetVotes(user.totalVotes ?? 0, currentVotes),
+    };
   }
 }

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
@@ -14,6 +15,29 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { InitialCompleteProfileDto } from './dto/initial-complete-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { CloudinaryService } from '../utils/cloudinary/cloudinary.service';
+import {
+  GATE_AGE_PREFERENCE,
+  GATE_INTERESTED_IN_GENDERS,
+  GATE_MAX_DISTANCE_KM,
+  votesUntilPictureUpdate,
+} from '../common/vote-thresholds';
+
+const GATE_FIELDS =
+  'pictureId picture totalVotes currentVotes interestedInGenders ' +
+  'minAgePreference maxAgePreference maxDistanceKm pictureUpdateExpiresAt';
+
+type GateUser = Pick<
+  User,
+  | 'totalVotes'
+  | 'currentVotes'
+  | 'interestedInGenders'
+  | 'minAgePreference'
+  | 'maxAgePreference'
+  | 'maxDistanceKm'
+  | 'picture'
+  | 'pictureId'
+  | 'pictureUpdateExpiresAt'
+>;
 
 @Injectable()
 export class UserService {
@@ -62,6 +86,7 @@ export class UserService {
     id: string,
     data: Partial<User>,
     unsetFields?: string[],
+    extraFilter?: Record<string, unknown>,
   ) {
     const update: Record<string, unknown> = { $set: data };
     if (unsetFields && unsetFields.length > 0) {
@@ -72,8 +97,106 @@ export class UserService {
       update.$unset = unset;
     }
     return await this.userModel
-      .findByIdAndUpdate(id, update, { returnDocument: 'after' })
+      .findOneAndUpdate({ _id: id, ...(extraFilter ?? {}) }, update, {
+        returnDocument: 'after',
+      })
       .exec();
+  }
+
+  // ── VOTE GATES ──
+  private assertGate(
+    isChanging: boolean,
+    isAlreadySet: boolean,
+    threshold: number,
+    totalVotes: number,
+  ): void {
+    if (!isChanging || isAlreadySet) return;
+    if (totalVotes >= threshold) return;
+
+    throw new ForbiddenException(
+      `Requires ${threshold} votes — you have ${totalVotes}`,
+    );
+  }
+
+  private assertProfileGates(user: GateUser, dto: UpdateProfileDto): void {
+    const totalVotes = user.totalVotes ?? 0;
+
+    this.assertGate(
+      dto.interestedInGenders !== undefined,
+      (user.interestedInGenders?.length ?? 0) > 0,
+      GATE_INTERESTED_IN_GENDERS,
+      totalVotes,
+    );
+
+    this.assertGate(
+      dto.minAgePreference !== undefined || dto.maxAgePreference !== undefined,
+      user.minAgePreference != null || user.maxAgePreference != null,
+      GATE_AGE_PREFERENCE,
+      totalVotes,
+    );
+
+    this.assertGate(
+      dto.maxDistanceKm !== undefined,
+      user.maxDistanceKm != null,
+      GATE_MAX_DISTANCE_KM,
+      totalVotes,
+    );
+  }
+
+  private assertPictureGate(user: GateUser): boolean {
+    if (!user.picture) return false;
+
+    const windowOpen =
+      user.pictureUpdateExpiresAt != null &&
+      new Date(user.pictureUpdateExpiresAt).getTime() > Date.now();
+
+    if (!windowOpen) {
+      const remaining = votesUntilPictureUpdate(user.currentVotes ?? 0);
+      throw new ForbiddenException(
+        `Please complete ${remaining} more votes to update your profile picture.`,
+      );
+    }
+
+    return true;
+  }
+
+  private async consumeAndUpdate(
+    userId: string,
+    update: Partial<User>,
+    consumesWindow: boolean,
+    uploadedPictureId: string | null = null,
+  ) {
+    if (!consumesWindow) {
+      return await this.updateUserById(userId, update);
+    }
+
+    const updated = await this.updateUserById(
+      userId,
+      update,
+      ['pictureUpdateExpiresAt'],
+      { pictureUpdateExpiresAt: { $gt: new Date() } },
+    );
+
+    if (!updated) {
+      if (uploadedPictureId) {
+        await this.cloudinaryService
+          .deleteImage(uploadedPictureId)
+          .catch(() => undefined);
+      }
+
+      const fresh = await this.userModel
+        .findById(userId)
+        .select('currentVotes')
+        .lean()
+        .exec();
+
+      throw new ForbiddenException(
+        `Please complete ${votesUntilPictureUpdate(fresh?.currentVotes ?? 0)} ` +
+          `more votes to update your profile picture.`,
+      );
+    }
+
+    return updated;
   }
 
   async initialCompleteProfile(
@@ -88,7 +211,7 @@ export class UserService {
     try {
       const currentUser = await this.userModel
         .findById(userId)
-        .select('pictureId')
+        .select(GATE_FIELDS)
         .lean()
         .exec();
 
@@ -99,6 +222,11 @@ export class UserService {
       const update: Partial<User> = {};
       update.fullName = dto.fullName;
       update.age = dto.age;
+
+      const consumesWindow = photoFile
+        ? this.assertPictureGate(currentUser)
+        : false;
+
       if (photoFile) {
         if (currentUser.pictureId) {
           await this.cloudinaryService.deleteImage(currentUser.pictureId);
@@ -113,7 +241,11 @@ export class UserService {
         update.pictureId = publicId;
       }
 
-      const updated = await this.updateUserById(userId, update);
+      const updated = await this.consumeAndUpdate(
+        userId,
+        update,
+        consumesWindow,
+      );
 
       return {
         success: true,
@@ -144,13 +276,18 @@ export class UserService {
     try {
       const currentUser = await this.userModel
         .findById(userId)
-        .select('pictureId')
+        .select(GATE_FIELDS)
         .lean()
         .exec();
 
       if (!currentUser) {
         throw new NotFoundException('User not found');
       }
+
+      this.assertProfileGates(currentUser, dto);
+      const consumesWindow = pictureFile
+        ? this.assertPictureGate(currentUser)
+        : false;
 
       const update: Partial<User> = {};
       if (dto.fullName !== undefined) update.fullName = dto.fullName;
@@ -168,6 +305,7 @@ export class UserService {
       if (dto.maxDistanceKm !== undefined)
         update.maxDistanceKm = dto.maxDistanceKm;
 
+      let uploadedPictureId: string | null = null;
       if (pictureFile) {
         const { url, publicId } = await this.cloudinaryService.uploadImage(
           pictureFile.buffer,
@@ -179,8 +317,15 @@ export class UserService {
         }
         update.picture = url;
         update.pictureId = publicId;
+        uploadedPictureId = publicId;
       }
-      const updated = await this.updateUserById(userId, update);
+
+      const updated = await this.consumeAndUpdate(
+        userId,
+        update,
+        consumesWindow,
+        uploadedPictureId,
+      );
 
       return {
         success: true,
