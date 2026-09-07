@@ -165,7 +165,7 @@ UserSchema.pre<UserDocument>('save', async function () {
     const counter = (await CounterModel.findOneAndUpdate(
       { _id: 'user' },
       { $inc: { seq: 1 } },
-      { upsert: true, new: true },
+      { upsert: true, returnDocument: 'after' },
     )) as { seq: number };
     this.displayId = `USR-${String(counter.seq).padStart(3, '0')}`;
   }

@@ -1013,7 +1013,7 @@ export class MatchingService {
             },
           },
         ],
-        { new: true, updatePipeline: true },
+        { returnDocument: 'after', updatePipeline: true },
       )
       .lean()
       .exec();

@@ -36,6 +36,15 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-argument': 'off',
       "@typescript-eslint/no-empty-object-type": "off",
       "@typescript-eslint/no-unused-vars": "warn",
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            'Property[key.name="new"][value.type="Literal"][value.value=true]',
+          message:
+            "Mongoose deprecated the `new` option. Use `returnDocument: 'after'` instead.",
+        },
+      ],
     },
   },
 );
