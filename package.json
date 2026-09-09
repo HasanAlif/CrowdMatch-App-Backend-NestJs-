@@ -22,7 +22,9 @@
     "seed:admin": "ts-node -r tsconfig-paths/register src/admin/seedAdmin.ts",
     "seed:demo": "ts-node -r tsconfig-paths/register src/scripts/seed-demo.ts",
     "migrate:vote-counters": "ts-node -r tsconfig-paths/register src/scripts/migrate-vote-counters.ts",
-    "test:scale": "RUN_FEED_SCALE=1 jest --config ./jest-int.config.js --runInBand src/matching/voting-feed-scale.int-spec.ts"
+    "migrate:devices": "ts-node -r tsconfig-paths/register src/scripts/migrate-devices.ts",
+    "test:scale": "RUN_FEED_SCALE=1 jest --config ./jest-int.config.js --runInBand src/matching/voting-feed-scale.int-spec.ts",
+    "test:generation": "RUN_GENERATION_SCALE=1 jest --config ./jest-int.config.js --runInBand src/matching/matching-generation.int-spec.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
@@ -42,6 +44,7 @@
     "class-validator": "^0.15.1",
     "cloudinary": "^2.10.0",
     "compression": "^1.7.4",
+    "firebase-admin": "^14.3.0",
     "google-auth-library": "^9.15.1",
     "helmet": "^8.0.0",
     "jose": "^5.10.0",

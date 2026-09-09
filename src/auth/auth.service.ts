@@ -23,6 +23,7 @@ import { ResendForgotPasswordOtpDto } from './dto/resendForgotPasswordOtp.dto';
 import { VerifyForgotPasswordOtpDto } from './dto/verifyForgotPasswordOtp.dto';
 import { ResetPasswordDto } from './dto/resetPassword.dto';
 import { RegisterWithPhoneDto } from './dto/registerPhone.dto';
+import { resolveDevice } from './dto/device.dto';
 
 // Exported so the demo seed hashes passwords with the exact same cost factor real
 // registration uses — a seeded user that cannot log in is a useless seeded user.
@@ -53,6 +54,10 @@ export class AuthService {
           fullName: dto.fullName,
           password: hashedPassword,
         });
+        await this.userService.captureDeviceSafely(
+          String(existing._id),
+          resolveDevice(dto.device),
+        );
         await this.mailService.sendOtpEmail(dto.email, otp);
       } else {
         const hashedPassword = await bcrypt.hash(dto.password, SALT_ROUNDS);
@@ -60,7 +65,7 @@ export class AuthService {
         const hashedOtp = await this.otpService.hashOtp(otp);
         const otpExpiry = this.otpService.getExpiryDate();
 
-        await this.userService.createUser({
+        const created = await this.userService.createUser({
           fullName: dto.fullName,
           email: dto.email,
           password: hashedPassword,
@@ -69,6 +74,10 @@ export class AuthService {
           isVerified: false,
           isActive: true,
         });
+        await this.userService.captureDeviceSafely(
+          String(created._id),
+          resolveDevice(dto.device),
+        );
         await this.mailService.sendOtpEmail(dto.email, otp);
       }
 
@@ -107,6 +116,10 @@ export class AuthService {
           fullName: dto.fullName,
           password: hashedPassword,
         });
+        await this.userService.captureDeviceSafely(
+          String(existing._id),
+          resolveDevice(dto.device),
+        );
         await this.smsService.sendOtpSms(dto.phone, otp);
       } else {
         const hashedPassword = await bcrypt.hash(dto.password, SALT_ROUNDS);
@@ -114,7 +127,7 @@ export class AuthService {
         const hashedOtp = await this.otpService.hashOtp(otp);
         const otpExpiry = this.otpService.getExpiryDate();
 
-        await this.userService.createUser({
+        const created = await this.userService.createUser({
           fullName: dto.fullName,
           phoneNumber: dto.phone,
           password: hashedPassword,
@@ -123,6 +136,10 @@ export class AuthService {
           isVerified: false,
           isActive: true,
         });
+        await this.userService.captureDeviceSafely(
+          String(created._id),
+          resolveDevice(dto.device),
+        );
         await this.smsService.sendOtpSms(dto.phone, otp);
       }
 
@@ -193,6 +210,11 @@ export class AuthService {
         String(user._id),
         { isVerified: true },
         ['otp', 'otpExpiry'],
+      );
+
+      await this.userService.captureDeviceSafely(
+        String(updatedUser!._id),
+        resolveDevice(dto.device),
       );
 
       const payload = { sub: updatedUser!._id, role: updatedUser!.role };
@@ -317,6 +339,11 @@ export class AuthService {
       if (!isMatch) {
         throw new UnauthorizedException('Invalid credentials');
       }
+
+      await this.userService.captureDeviceSafely(
+        String(user._id),
+        resolveDevice(loginDto.device),
+      );
 
       const payload = { sub: user._id, role: user.role };
       const accessToken = await this.jwtService.signAsync(payload);
@@ -552,6 +579,28 @@ export class AuthService {
         message: 'Password reset failed',
         error: err.message,
       });
+    }
+  }
+
+  async resolveUserIdFromToken(token?: string): Promise<string | null> {
+    if (!token) return null;
+    try {
+      const payload = await this.jwtService.verifyAsync<{ sub: string }>(
+        token,
+        { secret: this.configService.get<string>('jwt.secret') },
+      );
+      return payload?.sub ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async logout(userId: string | null, deviceId?: string): Promise<void> {
+    if (!userId || !deviceId) return;
+    try {
+      await this.userService.removeDevice(userId, deviceId);
+    } catch {
+      // Swallowed deliberately
     }
   }
 

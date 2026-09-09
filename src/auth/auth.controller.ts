@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Res } from '@nestjs/common';
+import { Body, Controller, Post, Req, Res } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { SocialAuthService } from './social-auth.service';
@@ -13,6 +13,19 @@ import { ResetPasswordDto } from './dto/resetPassword.dto';
 import { GoogleAuthDto } from './dto/googleAuth.dto';
 import { AppleAuthDto } from './dto/appleAuth.dto';
 import { RegisterWithPhoneDto } from './dto/registerPhone.dto';
+import { LogoutDto } from './dto/logout.dto';
+
+function extractToken(req: any): string | undefined {
+  const cookieHeader: string | undefined = req?.headers?.cookie;
+  if (cookieHeader) {
+    for (const part of cookieHeader.split(';')) {
+      const [key, val] = part.trim().split('=');
+      if (key === 'accessToken' && val) return val;
+    }
+  }
+  const [type, token] = req?.headers?.authorization?.split(' ') ?? [];
+  return type === 'Bearer' ? token : undefined;
+}
 
 @Controller('auth')
 export class AuthController {
@@ -80,9 +93,21 @@ export class AuthController {
     return result;
   }
 
-  // POST /auth/logout — clear the auth cookie
+  // POST /auth/logout — clear the auth cookie, optionally de-register a device
+  // Body { deviceId? }. Supplied, ONLY that device's push registration is removed
   @Post('logout')
-  logout(@Res({ passthrough: true }) res: any) {
+  async logout(
+    @Body() dto: LogoutDto,
+    @Req() req: any,
+    @Res({ passthrough: true }) res: any,
+  ) {
+    if (dto?.deviceId) {
+      const userId = await this.authService.resolveUserIdFromToken(
+        extractToken(req),
+      );
+      await this.authService.logout(userId, dto.deviceId);
+    }
+
     res.clearCookie('accessToken');
     return { success: true, message: 'Logged out successfully' };
   }

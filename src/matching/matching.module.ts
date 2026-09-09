@@ -14,10 +14,12 @@ import { User, UserSchema } from '../user/schemas/user.schema';
 import { MatchingService } from './matching.service';
 import { MatchingCron } from './matching.cron';
 import { MatchingController } from './matching.controller';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
+    NotificationModule,
 
     MongooseModule.forFeature([
       { name: Match.name, schema: MatchSchema },

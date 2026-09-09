@@ -1,4 +1,11 @@
-import { IsNotEmpty, IsString, IsOptional } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import { DeviceDto } from './device.dto';
 
 // DTO for Google Sign-In (POST /auth/google).
 export class GoogleAuthDto {
@@ -7,8 +14,9 @@ export class GoogleAuthDto {
   @IsString()
   idToken: string;
 
-  // Optional FCM device token for push notifications.
+  // Optional device block for push notifications.
   @IsOptional()
-  @IsString()
-  fcmToken?: string;
+  @ValidateNested()
+  @Type(() => DeviceDto)
+  device?: DeviceDto;
 }

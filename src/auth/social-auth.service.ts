@@ -13,6 +13,7 @@ import { AuthProvider, Role } from 'src/user/user.types';
 import { User } from 'src/user/schemas/user.schema';
 import { GoogleAuthDto } from 'src/auth/dto/googleAuth.dto';
 import { AppleAuthDto } from 'src/auth/dto/appleAuth.dto';
+import { resolveDevice, ResolvedDevice } from 'src/auth/dto/device.dto';
 
 //----------------------------Types--------------------------------------
 /**
@@ -34,7 +35,7 @@ export interface TSocialVerifiedPayload {
 interface TSocialProviderConfig {
   provider: AuthProvider.Google | AuthProvider.Apple;
   providerIdField: 'googleId' | 'appleId';
-  fcmToken?: string;
+  device?: ResolvedDevice | null;
 }
 
 //--------------------------Service---------------------------------------
@@ -140,7 +141,7 @@ export class SocialAuthService {
     payload: TSocialVerifiedPayload,
     config: TSocialProviderConfig,
   ) {
-    const { provider, providerIdField, fcmToken } = config;
+    const { provider, providerIdField, device } = config;
 
     try {
       // 1. Look up by provider-specific ID
@@ -207,15 +208,11 @@ export class SocialAuthService {
         });
       }
 
-      // 4. Update fcmTokens if a new token was supplied
-      if (fcmToken) {
-        const currentTokens: string[] = (user as any).fcmTokens ?? [];
-        if (!currentTokens.includes(fcmToken)) {
-          await this.userService.updateUserById(String(user._id), {
-            fcmTokens: [...currentTokens, fcmToken],
-          });
-        }
-      }
+      // 4. Capture the device, keyed by deviceId.
+      await this.userService.captureDeviceSafely(
+        String(user._id),
+        device ?? null,
+      );
 
       return user;
     } catch (error) {
@@ -242,7 +239,7 @@ export class SocialAuthService {
       const user = await this.findOrLinkUserByProvider(payload, {
         provider: AuthProvider.Google,
         providerIdField: 'googleId',
-        fcmToken: dto.fcmToken,
+        device: resolveDevice(dto.device),
       });
 
       const jwtPayload = { sub: user._id, role: user.role };
@@ -295,7 +292,7 @@ export class SocialAuthService {
       const user = await this.findOrLinkUserByProvider(payload, {
         provider: AuthProvider.Apple,
         providerIdField: 'appleId',
-        fcmToken: dto.fcmToken,
+        device: resolveDevice(dto.device),
       });
 
       const jwtPayload = { sub: user._id, role: user.role };

@@ -21,3 +21,9 @@ export enum AccountStatus {
   Suspended = 'suspended',
   Banned = 'banned',
 }
+
+export enum DevicePlatform {
+  Android = 'android',
+  IOS = 'ios',
+  Web = 'web',
+}

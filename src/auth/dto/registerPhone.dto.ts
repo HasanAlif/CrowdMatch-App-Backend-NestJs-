@@ -1,9 +1,13 @@
 import {
   IsNotEmpty,
-  IsString,
+  IsOptional,
   IsPhoneNumber,
+  IsString,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import { DeviceDto } from './device.dto';
 
 // DTO for phone-based registration (POST /auth/register/phone).
 export class RegisterWithPhoneDto {
@@ -20,4 +24,10 @@ export class RegisterWithPhoneDto {
   @IsNotEmpty()
   @MinLength(6)
   password: string;
+
+  // Optional device block for push notifications.
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DeviceDto)
+  device?: DeviceDto;
 }

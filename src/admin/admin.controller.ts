@@ -2,7 +2,9 @@ import {
   Body,
   Controller,
   Get,
+  Logger,
   Patch,
+  Post,
   Request,
   UploadedFile,
   UseGuards,
@@ -16,12 +18,19 @@ import { Roles } from 'src/auth/roles.decorator';
 import { Role } from 'src/user/user.types';
 import { AdminService } from './admin.service';
 import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
+import { NotificationTriggerService } from 'src/notification/notification-trigger.service';
+import { BroadcastDto } from 'src/notification/dto/broadcast.dto';
 
 @Controller('admin')
 @UseGuards(AuthGuard, RolesGuard)
 @Roles(Role.Admin)
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  private readonly logger = new Logger(AdminController.name);
+
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly notificationTriggers: NotificationTriggerService,
+  ) {}
 
   // GET /admin/profile
   @Get('profile')
@@ -45,5 +54,31 @@ export class AdminController {
   ) {
     const userId = req.user.sub as string;
     return this.adminService.updateAdminProfileInfo(userId, dto, picture);
+  }
+
+  // POST /admin/notifications/broadcast — push to every user
+  @Post('notifications/broadcast')
+  broadcast(@Body() dto: BroadcastDto) {
+    void this.notificationTriggers
+      .broadcast(dto.title, dto.message)
+      .then((stats) =>
+        this.logger.log(
+          `Broadcast dispatched: ${stats.usersProcessed} user(s), ` +
+            `${stats.recordsCreated} record(s), ${stats.pushed} push(es), ` +
+            `${stats.elapsedMs}ms`,
+        ),
+      )
+      .catch((err) =>
+        this.logger.error(
+          'Broadcast failed',
+          err instanceof Error ? err.stack : String(err),
+        ),
+      );
+
+    return {
+      success: true,
+      message: 'Broadcast queued and is being delivered',
+      data: { title: dto.title },
+    };
   }
 }

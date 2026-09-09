@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, PipelineStage, Types } from 'mongoose';
@@ -15,6 +16,7 @@ import { MatchCycleCheckpoint } from './schemas/match-cycle-checkpoint.schema';
 import { MatchedPair, PairOutcome } from './schemas/matched-pair.schema';
 import { User } from '../user/schemas/user.schema';
 import { AccountStatus } from '../user/user.types';
+import { NotificationTriggerService } from '../notification/notification-trigger.service';
 import {
   BOOST_DURATION_MS,
   BOOST_THRESHOLDS,
@@ -55,6 +57,12 @@ const ELIGIBLE_USER_FIELDS = {
   photos: 1,
 };
 
+const GENERATION_USER_FIELDS = {
+  ...ELIGIBLE_USER_FIELDS,
+  fullName: 1,
+  picture: 1,
+};
+
 interface EligibleUser {
   _id: Types.ObjectId;
   gender: string;
@@ -69,6 +77,13 @@ interface EligibleUser {
   photos: unknown[];
 }
 
+/** An EligibleUser plus the fields only the generation cycle loads. */
+interface GenerationUser extends EligibleUser {
+  fullName?: string;
+  picture?: string;
+  photos: { url?: string }[];
+}
+
 @Injectable()
 export class MatchingService {
   private readonly logger = new Logger(MatchingService.name);
@@ -81,6 +96,8 @@ export class MatchingService {
     @InjectModel(MatchedPair.name)
     private readonly matchedPairModel: Model<MatchedPair>,
     @InjectModel(User.name) private readonly userModel: Model<User>,
+    @Optional()
+    private readonly notifications?: NotificationTriggerService,
   ) {}
 
   getUserAge(user: { age?: number; dateOfBirth?: Date }): number | null {
@@ -172,11 +189,11 @@ export class MatchingService {
     };
   }
 
-  private async getEligibleUsers(): Promise<EligibleUser[]> {
+  private async getEligibleUsers(): Promise<GenerationUser[]> {
     return this.userModel
       .find(this.eligibleUserFilter())
-      .select(ELIGIBLE_USER_FIELDS)
-      .lean<EligibleUser[]>()
+      .select(GENERATION_USER_FIELDS)
+      .lean<GenerationUser[]>()
       .exec();
   }
 
@@ -532,6 +549,7 @@ export class MatchingService {
     }
 
     const matchDocs = pairsToCreate.map(([u1, u2]) => ({
+      _id: new Types.ObjectId(),
       user1: u1,
       user2: u2,
       user1Decision: MatchDecision.Pending,
@@ -571,6 +589,10 @@ export class MatchingService {
 
     const insertedPairs = pairsToCreate.filter((_, i) => !failedIndexes.has(i));
 
+    const insertedMatches = matchDocs
+      .filter((_, i) => !failedIndexes.has(i))
+      .map((d) => ({ matchId: d._id, user1: d.user1, user2: d.user2 }));
+
     if (failedIndexes.size > 0) {
       this.logger.warn(
         `Match insert partially failed: ${failedIndexes.size} of ` +
@@ -582,10 +604,40 @@ export class MatchingService {
 
     await this.recordPairsMatched(insertedPairs);
 
+    // Fire-and-forget: notification work happens strictly AFTER creation has committed, and must never block or fail the cycle.
+    void this.notifications
+      ?.notifyNewMatches(insertedMatches, this.buildPartnerMap(eligibleUsers))
+      .catch((err) =>
+        this.logger.error(
+          'New-match notifications failed',
+          err instanceof Error ? err.stack : String(err),
+        ),
+      );
+
     this.logger.log(
       `Match generation completed: ${insertedPairs.length} pairs created`,
     );
     return insertedPairs.length;
+  }
+
+  private buildPartnerMap(
+    users: GenerationUser[],
+  ): Map<
+    string,
+    { fullName?: string; picture?: string; photos?: { url?: string }[] }
+  > {
+    const map = new Map<
+      string,
+      { fullName?: string; picture?: string; photos?: { url?: string }[] }
+    >();
+    for (const u of users) {
+      map.set(u._id.toString(), {
+        fullName: u.fullName,
+        picture: u.picture,
+        photos: u.photos,
+      });
+    }
+    return map;
   }
 
   private async recordPairsMatched(
@@ -1030,6 +1082,20 @@ export class MatchingService {
       updated.decisionVersion,
     );
 
+    // Notify the OTHER participant, after the atomic pipeline has committed.
+    // Fire-and-forget: a notification failure must never fail the decision
+    if (decision === 'accepted') {
+      const otherParticipant = isUser1 ? updated.user2 : updated.user1;
+      void this.notifications
+        ?.notifyMatchAccepted(updated._id, userOid, otherParticipant)
+        .catch((err) =>
+          this.logger.error(
+            `Match-accepted notification failed for match ${updated._id.toString()}`,
+            err instanceof Error ? err.stack : String(err),
+          ),
+        );
+    }
+
     return {
       matchId: updated._id.toString(),
       myDecision: decision,
@@ -1309,6 +1375,14 @@ export class MatchingService {
                   { $ifNull: ['$boostExpiresAt', '$$REMOVE'] },
                 ],
               },
+
+              boostEndsNotifyAt: {
+                $cond: [
+                  { $in: [incremented, BOOST_THRESHOLDS] },
+                  boostUntil,
+                  { $ifNull: ['$boostEndsNotifyAt', '$$REMOVE'] },
+                ],
+              },
             },
           },
         ],
@@ -1329,6 +1403,17 @@ export class MatchingService {
     }
 
     const newCurrent = (before.currentVotes ?? 0) + 1;
+    const newTotal = (before.totalVotes ?? 0) + 1;
+
+    // Fire-and-forget, from values the atomic read above already returned
+    void this.notifications
+      ?.notifyVoteMilestone(voterOid, newTotal, newCurrent)
+      .catch((err) =>
+        this.logger.error(
+          `Vote-milestone notification failed for ${voterOid.toString()}`,
+          err instanceof Error ? err.stack : String(err),
+        ),
+      );
 
     if (newCurrent === REWARD_EXTRA_MATCH) {
       void this.generateBonusMatchForUser(voterOid).catch((err) =>
@@ -1417,8 +1502,9 @@ export class MatchingService {
     const chosen = compatible[Math.floor(Math.random() * compatible.length)];
     const [u1, u2] = this.normalisePair(userOid, chosen);
 
+    let created;
     try {
-      await this.matchModel.create({
+      created = await this.matchModel.create({
         user1: u1,
         user2: u2,
         user1Decision: MatchDecision.Pending,
@@ -1439,6 +1525,15 @@ export class MatchingService {
     }
 
     await this.recordPairsMatched([[u1, u2]]);
+
+    void this.notifications
+      ?.notifyNewMatches([{ matchId: created._id, user1: u1, user2: u2 }])
+      .catch((err) =>
+        this.logger.error(
+          `${tag}: notification failed`,
+          err instanceof Error ? err.stack : String(err),
+        ),
+      );
 
     this.logger.log(`${tag}: paired with ${chosen.toString()}`);
   }

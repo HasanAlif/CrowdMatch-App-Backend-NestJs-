@@ -1,4 +1,11 @@
-import { IsNotEmpty, IsString, IsOptional } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import { DeviceDto } from './device.dto';
 
 // DTO for Apple Sign-In (POST /auth/apple).
 export class AppleAuthDto {
@@ -13,8 +20,10 @@ export class AppleAuthDto {
   @IsString()
   fullName?: string;
 
-  // Optional FCM device token for push notifications.
+  // Optional device block for push notifications. Replaces the former flat
+  // `fcmToken` field — see GoogleAuthDto.
   @IsOptional()
-  @IsString()
-  fcmToken?: string;
+  @ValidateNested()
+  @Type(() => DeviceDto)
+  device?: DeviceDto;
 }

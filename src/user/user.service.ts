@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
@@ -14,6 +15,8 @@ import { User } from './schemas/user.schema';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { InitialCompleteProfileDto } from './dto/initial-complete-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
+import { ResolvedDevice } from '../auth/dto/device.dto';
 import { CloudinaryService } from '../utils/cloudinary/cloudinary.service';
 import {
   GATE_AGE_PREFERENCE,
@@ -41,6 +44,8 @@ type GateUser = Pick<
 
 @Injectable()
 export class UserService {
+  private readonly logger = new Logger(UserService.name);
+
   constructor(
     @InjectModel(User.name) private userModel: Model<User>,
     private readonly cloudinaryService: CloudinaryService,
@@ -101,6 +106,116 @@ export class UserService {
         returnDocument: 'after',
       })
       .exec();
+  }
+
+  async upsertDevice(userId: string, device: ResolvedDevice) {
+    const now = new Date();
+
+    const updated = await this.userModel
+      .updateOne(
+        { _id: userId, 'devices.deviceId': device.deviceId },
+        {
+          $set: {
+            'devices.$.fcmToken': device.fcmToken,
+            'devices.$.platform': device.platform,
+            'devices.$.deviceName': device.deviceName,
+            'devices.$.lastSeenAt': now,
+          },
+        },
+      )
+      .exec();
+
+    if (updated.matchedCount > 0) return;
+
+    await this.userModel
+      .updateOne(
+        { _id: userId, 'devices.deviceId': { $ne: device.deviceId } },
+        {
+          $push: {
+            devices: {
+              fcmToken: device.fcmToken,
+              deviceId: device.deviceId,
+              platform: device.platform,
+              deviceName: device.deviceName,
+              lastSeenAt: now,
+            },
+          },
+        },
+      )
+      .exec();
+  }
+
+  async captureDeviceSafely(
+    userId: string,
+    device: ResolvedDevice | null,
+  ): Promise<void> {
+    if (!device) return;
+    try {
+      await this.upsertDevice(userId, device);
+    } catch (err) {
+      this.logger.error(
+        `Device capture failed for user ${userId}: ` +
+          (err instanceof Error ? err.message : String(err)),
+      );
+    }
+  }
+
+  async removeDevice(userId: string, deviceId: string): Promise<boolean> {
+    const res = await this.userModel
+      .updateOne(
+        { _id: userId, 'devices.deviceId': deviceId },
+        { $pull: { devices: { deviceId } } },
+      )
+      .exec();
+    return res.matchedCount > 0;
+  }
+
+  async getDevices(userId: string) {
+    const user = await this.userModel
+      .findById(userId)
+      .select('devices')
+      .lean()
+      .exec();
+    if (!user) throw new NotFoundException('User not found');
+    return user.devices ?? [];
+  }
+
+  async updateNotificationPreferences(
+    userId: string,
+    dto: UpdateNotificationPreferencesDto,
+  ) {
+    const update: Record<string, boolean> = {};
+    if (dto.isNotifyNewMatches !== undefined) {
+      update.isNotifyNewMatches = dto.isNotifyNewMatches;
+    }
+    if (dto.isNotifyActivityReminders !== undefined) {
+      update.isNotifyActivityReminders = dto.isNotifyActivityReminders;
+    }
+
+    if (Object.keys(update).length === 0) {
+      throw new BadRequestException(
+        'Provide at least one of isNotifyNewMatches or isNotifyActivityReminders',
+      );
+    }
+
+    const user = await this.userModel
+      .findOneAndUpdate(
+        { _id: userId },
+        { $set: update },
+        {
+          returnDocument: 'after',
+          projection: { isNotifyNewMatches: 1, isNotifyActivityReminders: 1 },
+        },
+      )
+      .lean()
+      .exec();
+
+    if (!user) throw new NotFoundException('User not found');
+
+    return {
+      isNotifyNewMatches: user.isNotifyNewMatches,
+      isNotifyActivityReminders: user.isNotifyActivityReminders,
+    };
   }
 
   // ── VOTE GATES ──

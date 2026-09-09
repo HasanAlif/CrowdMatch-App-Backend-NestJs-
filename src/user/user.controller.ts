@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Patch,
@@ -15,6 +16,8 @@ import { UserService } from './user.service';
 import { InitialCompleteProfileDto } from './dto/initial-complete-profile.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
+import { DeviceDto, resolveDevice } from '../auth/dto/device.dto';
 
 @Controller('user')
 export class UserController {
@@ -62,5 +65,46 @@ export class UserController {
   changePassword(@Body() dto: ChangePasswordDto, @Request() req: any) {
     const userId = req.user.sub as string;
     return this.userService.changePassword(userId, dto);
+  }
+
+  // POST /user/device — register or refresh this device's push token
+  @UseGuards(AuthGuard)
+  @Post('device')
+  async registerDevice(@Body() dto: DeviceDto, @Request() req: any) {
+    const device = resolveDevice(dto);
+    if (!device) {
+      throw new BadRequestException(
+        'fcmToken, deviceId and platform are required',
+      );
+    }
+
+    const userId = req.user.sub as string;
+    await this.userService.upsertDevice(userId, device);
+
+    return {
+      success: true,
+      message: 'Device registered successfully',
+      data: { deviceId: device.deviceId, platform: device.platform },
+    };
+  }
+
+  // PATCH /user/notification-preferences — toggle push categories
+  @UseGuards(AuthGuard)
+  @Patch('notification-preferences')
+  async updateNotificationPreferences(
+    @Body() dto: UpdateNotificationPreferencesDto,
+    @Request() req: any,
+  ) {
+    const userId = req.user.sub as string;
+    const data = await this.userService.updateNotificationPreferences(
+      userId,
+      dto,
+    );
+
+    return {
+      success: true,
+      message: 'Notification preferences updated successfully',
+      data,
+    };
   }
 }
