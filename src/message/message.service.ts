@@ -22,7 +22,7 @@ import {
   MatchedPair,
   PairOutcome,
 } from '../matching/schemas/matched-pair.schema';
-import { normalisePair } from '../common/pair';
+import { normalisePair, pairKey } from '../common/pair';
 
 interface AggregatedConversation {
   partner: { _id: Types.ObjectId; [key: string]: unknown };
@@ -79,7 +79,7 @@ export class MessageService {
     const recipientIsUser1 = user1.equals(receiverOid);
 
     await this.conversationModel.updateOne(
-      { participants: [user1, user2] },
+      { pairKey: pairKey(senderOid, receiverOid) },
       {
         $set: {
           lastMessageAt: createdAt,
@@ -92,6 +92,7 @@ export class MessageService {
             createdAt,
           },
         },
+        $setOnInsert: { participants: [user1, user2] },
         $inc: { [recipientIsUser1 ? 'unreadForUser1' : 'unreadForUser2']: 1 },
       },
       { upsert: true },
@@ -114,17 +115,26 @@ export class MessageService {
       { $set: { isRead: true, readAt: new Date() } },
     );
 
-    const [user1, user2] = normalisePair(viewerOid, senderOid);
+    const [user1] = normalisePair(viewerOid, senderOid);
     const viewerIsUser1 = user1.equals(viewerOid);
 
     await this.conversationModel.updateOne(
-      { participants: [user1, user2] },
-      {
-        $set: {
-          [viewerIsUser1 ? 'unreadForUser1' : 'unreadForUser2']: 0,
-          ...(result.modifiedCount > 0 ? { 'lastMessage.isRead': true } : {}),
+      { pairKey: pairKey(viewerOid, senderOid) },
+      [
+        {
+          $set: {
+            [viewerIsUser1 ? 'unreadForUser1' : 'unreadForUser2']: 0,
+            lastMessage: {
+              $cond: [
+                { $eq: ['$lastMessage.sender', senderOid] },
+                { $mergeObjects: ['$lastMessage', { isRead: true }] },
+                '$lastMessage',
+              ],
+            },
+          },
         },
-      },
+      ],
+      { updatePipeline: true },
     );
 
     return result.modifiedCount;
@@ -456,8 +466,9 @@ export class MessageService {
       ],
     });
 
-    const [user1, user2] = normalisePair(requesterOid, otherOid);
-    await this.conversationModel.deleteOne({ participants: [user1, user2] });
+    await this.conversationModel.deleteOne({
+      pairKey: pairKey(requesterOid, otherOid),
+    });
 
     return result.deletedCount;
   }

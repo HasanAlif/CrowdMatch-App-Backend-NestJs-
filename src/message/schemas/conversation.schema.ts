@@ -31,6 +31,9 @@ export const LastMessageSnapshotSchema =
 
 @Schema({ timestamps: true, collection: 'conversations' })
 export class Conversation {
+  @Prop({ type: String, required: true })
+  pairKey: string;
+
   @Prop({ type: [Types.ObjectId], ref: 'User', required: true })
   participants: Types.ObjectId[];
 
@@ -51,7 +54,4 @@ export const ConversationSchema = SchemaFactory.createForClass(Conversation);
 
 ConversationSchema.index({ participants: 1, lastMessageAt: -1 });
 
-ConversationSchema.index(
-  { 'participants.0': 1, 'participants.1': 1 },
-  { unique: true },
-);
+ConversationSchema.index({ pairKey: 1 }, { unique: true });
