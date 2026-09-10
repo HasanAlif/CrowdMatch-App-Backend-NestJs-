@@ -13,6 +13,7 @@ import { AuthGuard } from '../auth/auth.guard';
 import { MessageService } from './message.service';
 import { MessageGateway } from './message.gateway';
 import { GetHistoryDto } from './dto/get-history.dto';
+import { GetConversationsDto } from './dto/get-conversations.dto';
 import { ReportUserDto } from './dto/report-user.dto';
 
 /**
@@ -52,13 +53,20 @@ export class MessageController {
 
   // ── 2. GET /messages/conversations ──
   @Get('conversations')
-  async getConversations(@Request() req: any): Promise<{
+  async getConversations(
+    @Query() query: GetConversationsDto,
+    @Request() req: any,
+  ): Promise<{
     success: boolean;
     message: string;
     data: unknown[];
   }> {
     const userId = req.user.sub as string;
-    const conversations = await this.messageService.getConversations(userId);
+    const conversations = await this.messageService.getConversations(
+      userId,
+      query.page,
+      query.limit,
+    );
     return {
       success: true,
       message: 'Conversations retrieved successfully',

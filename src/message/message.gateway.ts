@@ -7,7 +7,7 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { Logger } from '@nestjs/common';
+import { ForbiddenException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
@@ -19,6 +19,7 @@ import { CloudinaryService } from '../utils/cloudinary/cloudinary.service';
 import { AccountStatus } from '../user/user.types';
 import { SendMessageDto, ImagePayloadDto } from './dto/send-message.dto';
 import { MessageDocument } from './schemas/message.schema';
+import { ChatPermission, CHAT_DENIAL_COPY } from './message-copy';
 
 // ── Constants ──
 const MAX_TEXT_LENGTH = 5000;
@@ -175,7 +176,7 @@ export class MessageGateway
   private async canUsersChat(
     senderId: string,
     receiverId: string,
-  ): Promise<boolean> {
+  ): Promise<ChatPermission> {
     return this.messageService.canUsersChat(senderId, receiverId);
   }
 
@@ -261,12 +262,13 @@ export class MessageGateway
       }
     }
 
-    // Permission check.
-    const allowed = await this.canUsersChat(senderId, dto.receiverId);
-    if (!allowed) {
+    const permission = await this.canUsersChat(senderId, dto.receiverId);
+    if (!permission.allowed) {
+      const copy = CHAT_DENIAL_COPY[permission.reason];
       socket.emit('error', {
         event: 'send_message',
-        message: 'You are not permitted to message this user',
+        code: copy.code,
+        message: copy.message,
       });
       return;
     }
@@ -299,6 +301,16 @@ export class MessageGateway
         clientMessageId: dto.clientMessageId,
       });
     } catch (err) {
+      if (err instanceof ForbiddenException) {
+        const res = err.getResponse() as { code?: string; message?: string };
+        socket.emit('error', {
+          event: 'send_message',
+          code: res.code,
+          message: res.message,
+        });
+        return;
+      }
+
       this.logger.error('Failed to persist message', err);
       socket.emit('error', {
         event: 'send_message',

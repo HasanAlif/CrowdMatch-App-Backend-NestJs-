@@ -17,6 +17,7 @@ import { MatchedPair, PairOutcome } from './schemas/matched-pair.schema';
 import { User } from '../user/schemas/user.schema';
 import { AccountStatus } from '../user/user.types';
 import { NotificationTriggerService } from '../notification/notification-trigger.service';
+import { normalisePair } from '../common/pair';
 import {
   BOOST_DURATION_MS,
   BOOST_THRESHOLDS,
@@ -160,13 +161,6 @@ export class MatchingService {
     );
 
     return results;
-  }
-
-  private normalisePair(
-    a: Types.ObjectId,
-    b: Types.ObjectId,
-  ): [Types.ObjectId, Types.ObjectId] {
-    return a.toString() < b.toString() ? [a, b] : [b, a];
   }
 
   // MATCH GENERATION ALGORITHM
@@ -323,7 +317,7 @@ export class MatchingService {
       const distanceKm = candidate.dist_meters / 1000;
       if (distanceKm > candidate.maxDistanceKm) continue;
 
-      const [u1, u2] = this.normalisePair(user._id, candidate._id);
+      const [u1, u2] = normalisePair(user._id, candidate._id);
       const pairKey = `${u1.toString()}:${u2.toString()}`;
       if (existingActivePairs.has(pairKey)) continue;
 
@@ -362,7 +356,7 @@ export class MatchingService {
 
     const existingActivePairs = new Set<string>();
     for (const m of activeMatches) {
-      const [u1, u2] = this.normalisePair(m.user1, m.user2);
+      const [u1, u2] = normalisePair(m.user1, m.user2);
       existingActivePairs.add(`${u1.toString()}:${u2.toString()}`);
     }
 
@@ -380,7 +374,7 @@ export class MatchingService {
 
     const permanentlyRejectedPairs = new Set<string>();
     for (const p of rejectedPairDocs ?? []) {
-      const [u1, u2] = this.normalisePair(p.user1, p.user2);
+      const [u1, u2] = normalisePair(p.user1, p.user2);
       permanentlyRejectedPairs.add(`${u1.toString()}:${u2.toString()}`);
     }
 
@@ -423,7 +417,7 @@ export class MatchingService {
       const availableCandidates = candidates.filter((cId) => {
         const cStr = cId.toString();
         if ((matchCountThisCycle.get(cStr) ?? 0) >= 1) return false;
-        const [u1, u2] = this.normalisePair(user._id, cId);
+        const [u1, u2] = normalisePair(user._id, cId);
         return !pairedThisCycle.has(`${u1.toString()}:${u2.toString()}`);
       });
 
@@ -434,7 +428,7 @@ export class MatchingService {
 
       const randomIdx = Math.floor(Math.random() * availableCandidates.length);
       const chosenCandidate = availableCandidates[randomIdx];
-      const [u1, u2] = this.normalisePair(user._id, chosenCandidate);
+      const [u1, u2] = normalisePair(user._id, chosenCandidate);
       const pairKey = `${u1.toString()}:${u2.toString()}`;
 
       pairsToCreate.push([u1, u2]);
@@ -460,7 +454,7 @@ export class MatchingService {
         const cStr = cId.toString();
         if ((matchCountThisCycle.get(cStr) ?? 0) >= SOFT_MAX_MATCHES_PER_CYCLE)
           return false;
-        const [u1, u2] = this.normalisePair(user._id, cId);
+        const [u1, u2] = normalisePair(user._id, cId);
         return !pairedThisCycle.has(`${u1.toString()}:${u2.toString()}`);
       });
 
@@ -468,7 +462,7 @@ export class MatchingService {
 
       const randomIdx = Math.floor(Math.random() * availableCandidates.length);
       const chosenCandidate = availableCandidates[randomIdx];
-      const [u1, u2] = this.normalisePair(user._id, chosenCandidate);
+      const [u1, u2] = normalisePair(user._id, chosenCandidate);
       const pairKey = `${u1.toString()}:${u2.toString()}`;
 
       pairsToCreate.push([u1, u2]);
@@ -493,7 +487,7 @@ export class MatchingService {
       const candidates = candidateMap.get(userId) ?? [];
       if (candidates.length === 0) continue;
       const availableCandidates = candidates.filter((cId) => {
-        const [u1, u2] = this.normalisePair(user._id, cId);
+        const [u1, u2] = normalisePair(user._id, cId);
         return !pairedThisCycle.has(`${u1.toString()}:${u2.toString()}`);
       });
 
@@ -510,7 +504,7 @@ export class MatchingService {
         }
       }
 
-      const [u1, u2] = this.normalisePair(user._id, chosenCandidate);
+      const [u1, u2] = normalisePair(user._id, chosenCandidate);
       const pairKey = `${u1.toString()}:${u2.toString()}`;
 
       pairsToCreate.push([u1, u2]);
@@ -721,7 +715,7 @@ export class MatchingService {
     };
 
     for await (const m of cursor as any) {
-      const [u1, u2] = this.normalisePair(m.user1, m.user2);
+      const [u1, u2] = normalisePair(m.user1, m.user2);
       const rejectedAt = m.updatedAt ?? m.createdAt ?? new Date();
 
       ops.push({
@@ -1223,7 +1217,7 @@ export class MatchingService {
     decidedBy: Types.ObjectId,
     version: number,
   ): Promise<void> {
-    const [u1, u2] = this.normalisePair(userA, userB);
+    const [u1, u2] = normalisePair(userA, userB);
     const now = new Date();
 
     const outcome =
@@ -1481,7 +1475,7 @@ export class MatchingService {
     ) => {
       const set = new Set<string>();
       for (const d of docs) {
-        const [a, b] = this.normalisePair(d.user1, d.user2);
+        const [a, b] = normalisePair(d.user1, d.user2);
         set.add(`${a.toString()}:${b.toString()}`);
       }
       return set;
@@ -1500,7 +1494,7 @@ export class MatchingService {
     }
 
     const chosen = compatible[Math.floor(Math.random() * compatible.length)];
-    const [u1, u2] = this.normalisePair(userOid, chosen);
+    const [u1, u2] = normalisePair(userOid, chosen);
 
     let created;
     try {

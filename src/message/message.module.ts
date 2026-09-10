@@ -4,8 +4,16 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 
 import { Message, MessageSchema } from './schemas/message.schema';
+import {
+  Conversation,
+  ConversationSchema,
+} from './schemas/conversation.schema';
 import { Report, ReportSchema } from './schemas/report.schema';
 import { User, UserSchema } from '../user/schemas/user.schema';
+import {
+  MatchedPair,
+  MatchedPairSchema,
+} from '../matching/schemas/matched-pair.schema';
 import { MessageService } from './message.service';
 import { MessageGateway } from './message.gateway';
 import { MessageController } from './message.controller';
@@ -14,8 +22,10 @@ import { MessageController } from './message.controller';
   imports: [
     MongooseModule.forFeature([
       { name: Message.name, schema: MessageSchema },
+      { name: Conversation.name, schema: ConversationSchema },
       { name: Report.name, schema: ReportSchema },
       { name: User.name, schema: UserSchema },
+      { name: MatchedPair.name, schema: MatchedPairSchema },
     ]),
 
     ConfigModule,

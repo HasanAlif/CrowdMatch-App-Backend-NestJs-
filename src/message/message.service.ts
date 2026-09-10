@@ -1,4 +1,5 @@
 import {
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -7,10 +8,28 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, PipelineStage, Types } from 'mongoose';
 import { Message, MessageDocument } from './schemas/message.schema';
+import { Conversation } from './schemas/conversation.schema';
 import { Report, ReportDocument } from './schemas/report.schema';
 import { ReportReason } from './schemas/report.schema';
+import {
+  ChatPermission,
+  CHAT_DENIAL_COPY,
+  decideChatPermission,
+} from './message-copy';
 import { User } from '../user/schemas/user.schema';
 import { AccountStatus } from '../user/user.types';
+import {
+  MatchedPair,
+  PairOutcome,
+} from '../matching/schemas/matched-pair.schema';
+import { normalisePair } from '../common/pair';
+
+interface AggregatedConversation {
+  partner: { _id: Types.ObjectId; [key: string]: unknown };
+  partnerBlockedRequester: boolean;
+  lastMessage: Record<string, unknown>;
+  unreadCount: number;
+}
 
 @Injectable()
 export class MessageService {
@@ -20,6 +39,10 @@ export class MessageService {
     @InjectModel(Message.name) private readonly messageModel: Model<Message>,
     @InjectModel(Report.name) private readonly reportModel: Model<Report>,
     @InjectModel(User.name) private readonly userModel: Model<User>,
+    @InjectModel(MatchedPair.name)
+    private readonly matchedPairModel: Model<MatchedPair>,
+    @InjectModel(Conversation.name)
+    private readonly conversationModel: Model<Conversation>,
   ) {}
 
   async setOnlineStatus(userId: string, isOnline: boolean): Promise<void> {
@@ -36,25 +59,74 @@ export class MessageService {
     images?: { url: string; publicId: string }[];
     clientMessageId?: string;
   }): Promise<MessageDocument> {
-    return this.messageModel.create({
-      sender: new Types.ObjectId(data.senderId),
-      receiver: new Types.ObjectId(data.receiverId),
+    await this.assertCanChat(data.senderId, data.receiverId);
+
+    const senderOid = new Types.ObjectId(data.senderId);
+    const receiverOid = new Types.ObjectId(data.receiverId);
+
+    const message = await this.messageModel.create({
+      sender: senderOid,
+      receiver: receiverOid,
       text: data.text,
       images: data.images ?? [],
       clientMessageId: data.clientMessageId,
     });
+
+    const createdAt = (message as MessageDocument & { createdAt: Date })
+      .createdAt;
+
+    const [user1, user2] = normalisePair(senderOid, receiverOid);
+    const recipientIsUser1 = user1.equals(receiverOid);
+
+    await this.conversationModel.updateOne(
+      { participants: [user1, user2] },
+      {
+        $set: {
+          lastMessageAt: createdAt,
+          lastMessage: {
+            messageId: message._id,
+            text: message.text,
+            sender: senderOid,
+            images: message.images ?? [],
+            isRead: false,
+            createdAt,
+          },
+        },
+        $inc: { [recipientIsUser1 ? 'unreadForUser1' : 'unreadForUser2']: 1 },
+      },
+      { upsert: true },
+    );
+
+    return message;
   }
 
   // ── Mark read ──
   async markRead(viewerId: string, senderId: string): Promise<number> {
+    const viewerOid = new Types.ObjectId(viewerId);
+    const senderOid = new Types.ObjectId(senderId);
+
     const result = await this.messageModel.updateMany(
       {
-        sender: new Types.ObjectId(senderId),
-        receiver: new Types.ObjectId(viewerId),
+        sender: senderOid,
+        receiver: viewerOid,
         isRead: false,
       },
       { $set: { isRead: true, readAt: new Date() } },
     );
+
+    const [user1, user2] = normalisePair(viewerOid, senderOid);
+    const viewerIsUser1 = user1.equals(viewerOid);
+
+    await this.conversationModel.updateOne(
+      { participants: [user1, user2] },
+      {
+        $set: {
+          [viewerIsUser1 ? 'unreadForUser1' : 'unreadForUser2']: 0,
+          ...(result.modifiedCount > 0 ? { 'lastMessage.isRead': true } : {}),
+        },
+      },
+    );
+
     return result.modifiedCount;
   }
 
@@ -114,63 +186,52 @@ export class MessageService {
 
   // ── Conversation list (inbox) ─────────────────────────────────────────────
 
-  /**
-    Returns the list of distinct conversation partners for `userId`, ordered
-    by the most recent message timestamp descending.  Each entry includes a
-    last-message preview, the partner's basic profile, and the unread count
-    for that conversation.
-   
-    Algorithm of this flow:
-     1. $match — all messages where userId is sender OR receiver.
-     2. $sort  — newest first before grouping (MongoDB preserves order inside
-                 $push for the accumulator used below).
-     3. $group — by "other party" ID; accumulate last message + unread count.
-     4. $lookup — hydrate the other party's profile (name, picture).
-     5. $sort  — final sort by lastMessage.createdAt descending.
-   */
-  async getConversations(userId: string): Promise<unknown[]> {
+  async getConversations(
+    userId: string,
+    page?: number,
+    limit?: number,
+  ): Promise<unknown[]> {
     const userOid = new Types.ObjectId(userId);
 
+    const requesterIsUser1 = {
+      $eq: [{ $arrayElemAt: ['$participants', 0] }, userOid],
+    };
+
     const pipeline: PipelineStage[] = [
-      // 1. Scope to this user's messages.
-      {
-        $match: {
-          $or: [{ sender: userOid }, { receiver: userOid }],
-        },
-      },
+      // 1. This user's conversations, newest first — index-provided sort.
+      { $match: { participants: userOid } },
+      { $sort: { lastMessageAt: -1 } },
+    ];
 
-      // 2. Newest-first so $first/$push give us the most-recent message.
-      { $sort: { createdAt: -1 } },
+    // 2. Bound the page before anything expensive happens.
+    if (limit != null) {
+      const skip = ((page ?? 1) - 1) * limit;
+      if (skip > 0) pipeline.push({ $skip: skip });
+      pipeline.push({ $limit: limit });
+    }
 
-      // 3. Group by conversation partner.
+    pipeline.push(
+      // 3. Resolve the partner id and this user's side of the counter.
       {
-        $group: {
-          _id: {
-            $cond: [{ $eq: ['$sender', userOid] }, '$receiver', '$sender'],
+        $addFields: {
+          partnerId: {
+            $cond: [
+              requesterIsUser1,
+              { $arrayElemAt: ['$participants', 1] },
+              { $arrayElemAt: ['$participants', 0] },
+            ],
           },
-          lastMessage: { $first: '$$ROOT' },
           unreadCount: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: ['$receiver', userOid] },
-                    { $eq: ['$isRead', false] },
-                  ],
-                },
-                1,
-                0,
-              ],
-            },
+            $cond: [requesterIsUser1, '$unreadForUser1', '$unreadForUser2'],
           },
         },
       },
 
-      // 4. Join partner's profile.
+      // 4. Join partner's profile — bounded by page size, after the limit.
       {
         $lookup: {
           from: 'users',
-          localField: '_id',
+          localField: 'partnerId',
           foreignField: '_id',
           as: 'partner',
           pipeline: [
@@ -182,6 +243,9 @@ export class MessageService {
                 isOnline: 1,
                 lastSeen: 1,
                 displayId: 1,
+                blockedRequester: {
+                  $in: [userOid, { $ifNull: ['$blockedUsers', []] }],
+                },
               },
             },
           ] as Exclude<
@@ -192,16 +256,23 @@ export class MessageService {
       },
       { $unwind: '$partner' },
 
-      // 5. Final sort by most-recent message.
-      { $sort: { 'lastMessage.createdAt': -1 } },
-
-      // 6. Project to a clean shape.
+      // 5. Project to exactly the shape the endpoint has always returned.
       {
         $project: {
           _id: 0,
-          partner: 1,
+          partner: {
+            _id: '$partner._id',
+            fullName: '$partner.fullName',
+            picture: '$partner.picture',
+            isOnline: '$partner.isOnline',
+            lastSeen: '$partner.lastSeen',
+            displayId: '$partner.displayId',
+          },
+          partnerBlockedRequester: {
+            $ifNull: ['$partner.blockedRequester', false],
+          },
           lastMessage: {
-            _id: '$lastMessage._id',
+            _id: '$lastMessage.messageId',
             text: '$lastMessage.text',
             images: '$lastMessage.images',
             isRead: '$lastMessage.isRead',
@@ -211,19 +282,96 @@ export class MessageService {
           unreadCount: 1,
         },
       },
-    ];
+    );
 
+    let rows: AggregatedConversation[];
     try {
-      return this.messageModel.aggregate(pipeline).exec();
+      rows = await this.conversationModel
+        .aggregate<AggregatedConversation>(pipeline)
+        .exec();
     } catch (err) {
       this.logger.error('getConversations aggregation failed', err);
       throw new InternalServerErrorException('Failed to load conversations');
     }
+
+    if (rows.length === 0) return [];
+
+    const partnerIds = rows.map((r) => r.partner._id);
+
+    const [requester, outcomes] = await Promise.all([
+      this.userModel.findById(userOid).select('blockedUsers').lean().exec(),
+      this.findPairOutcomes(userOid, partnerIds),
+    ]);
+
+    const requesterBlocked = new Set(
+      (requester?.blockedUsers ?? []).map((id) => id.toString()),
+    );
+
+    return rows.map((row) => {
+      const partnerId = row.partner._id.toString();
+
+      const permission = decideChatPermission({
+        senderExists: true,
+        receiverExists: true,
+        senderBlockedReceiver: requesterBlocked.has(partnerId),
+        receiverBlockedSender: row.partnerBlockedRequester,
+        outcome: outcomes.get(partnerId),
+      });
+
+      const base = {
+        partner: row.partner,
+        lastMessage: row.lastMessage,
+        unreadCount: row.unreadCount,
+      };
+
+      return permission.allowed
+        ? { ...base, canChat: true }
+        : {
+            ...base,
+            canChat: false,
+            chatDisabledCode: CHAT_DENIAL_COPY[permission.reason].code,
+          };
+    });
   }
 
-  // ── Helpers ──
-  // Load a minimal user record needed for socket auth (accountStatus only).
-  // Returns null if not found.
+  private async findPairOutcomes(
+    userOid: Types.ObjectId,
+    partnerIds: Types.ObjectId[],
+  ): Promise<Map<string, PairOutcome>> {
+    const partnerIsUser1: Types.ObjectId[] = [];
+    const partnerIsUser2: Types.ObjectId[] = [];
+
+    for (const partnerId of partnerIds) {
+      const [first] = normalisePair(userOid, partnerId);
+      if (first.equals(userOid)) partnerIsUser2.push(partnerId);
+      else partnerIsUser1.push(partnerId);
+    }
+
+    const branches: Record<string, unknown>[] = [];
+    if (partnerIsUser2.length) {
+      branches.push({ user1: userOid, user2: { $in: partnerIsUser2 } });
+    }
+    if (partnerIsUser1.length) {
+      branches.push({ user1: { $in: partnerIsUser1 }, user2: userOid });
+    }
+
+    const outcomes = new Map<string, PairOutcome>();
+    if (branches.length === 0) return outcomes;
+
+    const pairs = await this.matchedPairModel
+      .find({ $or: branches })
+      .select('user1 user2 outcome')
+      .lean()
+      .exec();
+
+    for (const pair of pairs) {
+      const partnerId = pair.user1.equals(userOid) ? pair.user2 : pair.user1;
+      outcomes.set(partnerId.toString(), pair.outcome);
+    }
+
+    return outcomes;
+  }
+
   async findUserForAuth(
     userId: string,
   ): Promise<{ _id: Types.ObjectId; accountStatus: AccountStatus } | null> {
@@ -252,26 +400,48 @@ export class MessageService {
   }
 
   // ── Permission check ──
-  async canUsersChat(senderId: string, receiverId: string): Promise<boolean> {
+
+  async canUsersChat(
+    senderId: string,
+    receiverId: string,
+  ): Promise<ChatPermission> {
     const senderOid = new Types.ObjectId(senderId);
     const receiverOid = new Types.ObjectId(receiverId);
 
-    const [sender, receiver] = await Promise.all([
+    const [user1, user2] = normalisePair(senderOid, receiverOid);
+
+    const [sender, receiver, pair] = await Promise.all([
       this.userModel.findById(senderOid).select('blockedUsers').lean().exec(),
       this.userModel.findById(receiverOid).select('blockedUsers').lean().exec(),
+      this.matchedPairModel
+        .findOne({ user1, user2 })
+        .select('outcome')
+        .lean()
+        .exec(),
     ]);
 
-    if (!sender || !receiver) return false;
+    return decideChatPermission({
+      senderExists: !!sender,
+      receiverExists: !!receiver,
+      senderBlockedReceiver: (sender?.blockedUsers ?? []).some((id) =>
+        id.equals(receiverOid),
+      ),
+      receiverBlockedSender: (receiver?.blockedUsers ?? []).some((id) =>
+        id.equals(senderOid),
+      ),
+      outcome: pair?.outcome,
+    });
+  }
 
-    const senderBlockedReceiver = (sender.blockedUsers ?? []).some((id) =>
-      id.equals(receiverOid),
-    );
-    const receiverBlockedSender = (receiver.blockedUsers ?? []).some((id) =>
-      id.equals(senderOid),
-    );
+  private async assertCanChat(
+    senderId: string,
+    receiverId: string,
+  ): Promise<void> {
+    const permission = await this.canUsersChat(senderId, receiverId);
+    if (permission.allowed) return;
 
-    if (senderBlockedReceiver || receiverBlockedSender) return false;
-    return true;
+    const copy = CHAT_DENIAL_COPY[permission.reason];
+    throw new ForbiddenException({ code: copy.code, message: copy.message });
   }
 
   // ── Clear chat ──
@@ -285,6 +455,9 @@ export class MessageService {
         { sender: otherOid, receiver: requesterOid },
       ],
     });
+
+    const [user1, user2] = normalisePair(requesterOid, otherOid);
+    await this.conversationModel.deleteOne({ participants: [user1, user2] });
 
     return result.deletedCount;
   }
