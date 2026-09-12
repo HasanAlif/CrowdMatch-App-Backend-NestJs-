@@ -137,8 +137,8 @@ export class User {
   @Prop({ type: [UserPhotoSchema], default: [] })
   photos: UserPhoto[];
 
-  @Prop({ type: [String] })
-  interestedInGenders?: string[];
+  @Prop({ type: String, enum: Gender })
+  interestedInGenders?: Gender;
 
   @Prop({ type: Number })
   minAgePreference: number;

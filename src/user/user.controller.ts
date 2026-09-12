@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   Patch,
   Post,
   Request,
@@ -39,6 +40,14 @@ export class UserController {
   ) {
     const userId = req.user.sub as string;
     return this.userService.initialCompleteProfile(userId, dto, photo);
+  }
+
+  // GET /user/profile — get authenticated user's profile
+  @UseGuards(AuthGuard)
+  @Get('profile')
+  getProfile(@Request() req: any) {
+    const userId = req.user.sub as string;
+    return this.userService.getProfile(userId);
   }
 
   // PATCH /user/profile — update profile fields and/or picture (multipart/form-data)

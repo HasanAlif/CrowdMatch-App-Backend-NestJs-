@@ -238,7 +238,7 @@ export class UserService {
 
     this.assertGate(
       dto.interestedInGenders !== undefined,
-      (user.interestedInGenders?.length ?? 0) > 0,
+      user.interestedInGenders != null,
       GATE_INTERESTED_IN_GENDERS,
       totalVotes,
     );
@@ -377,6 +377,16 @@ export class UserService {
         (err as Error).message ?? 'Failed to complete profile',
       );
     }
+  }
+
+  async getProfile(userId: string) {
+    return await this.userModel
+      .findById(userId)
+      .select(
+        'picture fullName age interestedInGenders minAgePreference maxAgePreference maxDistanceKm',
+      )
+      .lean()
+      .exec();
   }
 
   async updateProfile(

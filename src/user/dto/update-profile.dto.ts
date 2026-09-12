@@ -5,7 +5,6 @@ import {
   MaxLength,
   IsEnum,
   IsDate,
-  IsArray,
   IsNumber,
   Min,
   Max,
@@ -46,12 +45,11 @@ export class UpdateProfileDto {
   bio?: string;
 
   @IsOptional()
-  @IsArray()
   @IsEnum(Gender, {
-    each: true,
-    message: 'each value in interestedInGenders must be a valid gender',
+    message:
+      'interestedInGenders must be one of: male, female, non_binary, other',
   })
-  interestedInGenders?: string[];
+  interestedInGenders?: Gender;
 
   @IsOptional()
   @Type(() => Number)

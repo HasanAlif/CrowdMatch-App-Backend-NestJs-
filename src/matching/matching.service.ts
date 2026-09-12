@@ -67,7 +67,7 @@ const GENERATION_USER_FIELDS = {
 interface EligibleUser {
   _id: Types.ObjectId;
   gender: string;
-  interestedInGenders: string[];
+  interestedInGenders: string;
   age?: number;
   dateOfBirth?: Date;
   minAgePreference: number;
@@ -170,7 +170,7 @@ export class MatchingService {
       isVerified: true,
       accountStatus: AccountStatus.Active,
       gender: { $exists: true, $ne: null },
-      interestedInGenders: { $exists: true, $not: { $size: 0 } },
+      interestedInGenders: { $exists: true, $ne: null },
       geoLocation: { $exists: true, $ne: null },
       maxDistanceKm: { $exists: true, $ne: null },
       minAgePreference: { $exists: true, $ne: null },
@@ -222,7 +222,7 @@ export class MatchingService {
               _id: { $ne: user._id },
               isVerified: true,
               accountStatus: AccountStatus.Active,
-              gender: { $in: user.interestedInGenders },
+              gender: user.interestedInGenders,
               interestedInGenders: user.gender,
               'photos.0': { $exists: true },
               minAgePreference: { $lte: userAge },
