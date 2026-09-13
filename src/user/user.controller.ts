@@ -2,6 +2,8 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
+  Get,
   Patch,
   Post,
   Request,
@@ -16,6 +18,7 @@ import { UserService } from './user.service';
 import { InitialCompleteProfileDto } from './dto/initial-complete-profile.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { DeleteAccountDto } from './dto/delete-account.dto';
 import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
 import { DeviceDto, resolveDevice } from '../auth/dto/device.dto';
 
@@ -39,6 +42,14 @@ export class UserController {
   ) {
     const userId = req.user.sub as string;
     return this.userService.initialCompleteProfile(userId, dto, photo);
+  }
+
+  // GET /user/profile — get authenticated user's profile
+  @UseGuards(AuthGuard)
+  @Get('profile')
+  getProfile(@Request() req: any) {
+    const userId = req.user.sub as string;
+    return this.userService.getProfile(userId);
   }
 
   // PATCH /user/profile — update profile fields and/or picture (multipart/form-data)
@@ -65,6 +76,14 @@ export class UserController {
   changePassword(@Body() dto: ChangePasswordDto, @Request() req: any) {
     const userId = req.user.sub as string;
     return this.userService.changePassword(userId, dto);
+  }
+
+  // DELETE /user/account — irreversibly delete the authenticated user's account
+  @UseGuards(AuthGuard)
+  @Delete('account')
+  deleteAccount(@Body() dto: DeleteAccountDto, @Request() req: any) {
+    const userId = req.user.sub as string;
+    return this.userService.deleteAccount(userId, dto);
   }
 
   // POST /user/device — register or refresh this device's push token

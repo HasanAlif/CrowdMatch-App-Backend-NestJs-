@@ -34,15 +34,6 @@ export class GeoLocation {
 
 export const GeoLocationSchema = SchemaFactory.createForClass(GeoLocation);
 
-/**
- * One push-capable device belonging to a user.
- *
- * deviceId is the NATURAL KEY: it identifies the physical device and is stable
- * across token rotations. Every capture point UPSERTS by deviceId rather than
- * appending, because FCM tokens rotate constantly — appending would grow the
- * array without bound and fan a single notification out as N duplicate pushes
- * to the same handset.
- */
 @Schema({ _id: false })
 export class UserDevice {
   @Prop({ required: true })
@@ -137,8 +128,8 @@ export class User {
   @Prop({ type: [UserPhotoSchema], default: [] })
   photos: UserPhoto[];
 
-  @Prop({ type: [String] })
-  interestedInGenders?: string[];
+  @Prop({ type: String, enum: Gender })
+  interestedInGenders?: Gender;
 
   @Prop({ type: Number })
   minAgePreference: number;
@@ -155,6 +146,9 @@ export class User {
   @Prop({ type: String, enum: AccountStatus, default: AccountStatus.Active })
   accountStatus: AccountStatus;
 
+  @Prop({ type: Date })
+  deletedAt?: Date;
+
   @Prop({ type: Number, default: 0 })
   totalVotes: number;
 
@@ -164,30 +158,9 @@ export class User {
   @Prop({ type: Date })
   boostExpiresAt?: Date;
 
-  /**
-   * PENDING QUEUE for the boost-end announcement — present ONLY while a boost
-   * end is owed and unannounced, absent otherwise.
-   *
-   * This is what makes the every-2-minutes sweep free. The obvious query
-   * ("boostExpiresAt <= now AND not yet announced") compares two fields, which
-   * needs $expr and cannot use an index; and { boostExpiresAt: 1 } would then
-   * be scanned across every user who has EVER been boosted, since all of their
-   * expiries are in the past. Here the sparse index below holds only the
-   * handful of users with an outstanding announcement, so the (almost always
-   * empty) sweep examines zero keys.
-   *
-   * Written in the same $set branch that grants the boost, so it costs castVote
-   * nothing, and $unset the moment the end is announced.
-   *
-   * NON-STACKING falls out of this for free: re-earning a boost at 100 while
-   * the 50-boost is live simply overwrites this with the new expiry, so there
-   * is never more than one pending announcement per user and the first boost
-   * never separately "ends".
-   */
   @Prop({ type: Date })
   boostEndsNotifyAt?: Date;
 
-  /** Audit stamp: when this user's last boost end was actually announced. */
   @Prop({ type: Date })
   boostEndNotifiedAt?: Date;
 
@@ -227,32 +200,8 @@ UserSchema.index({ isOnline: 1 });
 
 UserSchema.index({ boostExpiresAt: 1 }, { sparse: true });
 
-/**
- * Serves the boost-end sweep, which runs every 2 minutes (~720x/day) and
- * returns nothing almost every time.
- *
- * sparse: true keeps out every user without a pending announcement, so the
- * B-tree holds only boosts awaiting their end message. The sweep's range is
- * [MinKey, now] and every live entry is > now, so the empty case examines
- * ZERO keys — verified by explain in notification-rewards.int-spec.ts.
- */
 UserSchema.index({ boostEndsNotifyAt: 1 }, { sparse: true });
 
-/**
- * Push-target lookups for the two notification crons, which both run exactly
- * "users with >=1 device AND preference X enabled".
- *
- * The partialFilterExpression keeps ONLY users who actually have a device in
- * the index, which is precisely the push-target population — the tokenless
- * tail (web signups that never granted permission, lapsed accounts) never
- * enters the B-tree at all. The trailing _id key gives bounded seeks for the
- * `_id: { $in: [...recipients] }` form the new-match trigger uses, instead of
- * falling back to the _id index and re-checking the preference on every doc.
- *
- * NOTE: a query must include `'devices.0': { $exists: true }` LITERALLY for
- * MongoDB to consider a partial index eligible. NotificationService always
- * emits it — see pushTargetFilter().
- */
 UserSchema.index(
   { isNotifyNewMatches: 1, _id: 1 },
   { partialFilterExpression: { 'devices.0': { $exists: true } } },
@@ -263,7 +212,6 @@ UserSchema.index(
   { partialFilterExpression: { 'devices.0': { $exists: true } } },
 );
 
-// Device lookup by natural key — used by the upsert path and by $pull on logout.
 UserSchema.index({ 'devices.deviceId': 1 }, { sparse: true });
 
 UserSchema.pre<UserDocument>('save', async function () {

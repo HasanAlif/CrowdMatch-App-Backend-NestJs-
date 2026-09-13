@@ -27,6 +27,7 @@ import { normalisePair, pairKey } from '../common/pair';
 interface AggregatedConversation {
   partner: { _id: Types.ObjectId; [key: string]: unknown };
   partnerBlockedRequester: boolean;
+  partnerDeleted: boolean;
   lastMessage: Record<string, unknown>;
   unreadCount: number;
 }
@@ -256,6 +257,9 @@ export class MessageService {
                 blockedRequester: {
                   $in: [userOid, { $ifNull: ['$blockedUsers', []] }],
                 },
+                isDeleted: {
+                  $eq: ['$accountStatus', AccountStatus.Deleted],
+                },
               },
             },
           ] as Exclude<
@@ -281,6 +285,7 @@ export class MessageService {
           partnerBlockedRequester: {
             $ifNull: ['$partner.blockedRequester', false],
           },
+          partnerDeleted: { $ifNull: ['$partner.isDeleted', false] },
           lastMessage: {
             _id: '$lastMessage.messageId',
             text: '$lastMessage.text',
@@ -325,6 +330,8 @@ export class MessageService {
         receiverExists: true,
         senderBlockedReceiver: requesterBlocked.has(partnerId),
         receiverBlockedSender: row.partnerBlockedRequester,
+        senderDeleted: false,
+        receiverDeleted: row.partnerDeleted,
         outcome: outcomes.get(partnerId),
       });
 
@@ -421,8 +428,16 @@ export class MessageService {
     const [user1, user2] = normalisePair(senderOid, receiverOid);
 
     const [sender, receiver, pair] = await Promise.all([
-      this.userModel.findById(senderOid).select('blockedUsers').lean().exec(),
-      this.userModel.findById(receiverOid).select('blockedUsers').lean().exec(),
+      this.userModel
+        .findById(senderOid)
+        .select('blockedUsers accountStatus')
+        .lean()
+        .exec(),
+      this.userModel
+        .findById(receiverOid)
+        .select('blockedUsers accountStatus')
+        .lean()
+        .exec(),
       this.matchedPairModel
         .findOne({ user1, user2 })
         .select('outcome')
@@ -439,6 +454,8 @@ export class MessageService {
       receiverBlockedSender: (receiver?.blockedUsers ?? []).some((id) =>
         id.equals(senderOid),
       ),
+      senderDeleted: sender?.accountStatus === AccountStatus.Deleted,
+      receiverDeleted: receiver?.accountStatus === AccountStatus.Deleted,
       outcome: pair?.outcome,
     });
   }

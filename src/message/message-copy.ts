@@ -1,6 +1,7 @@
 import { PairOutcome } from '../matching/schemas/matched-pair.schema';
 
-export type ChatDenialReason = 'blocked' | 'not_matched' | 'unknown_user';
+export type ChatDenialReason =
+  'blocked' | 'not_matched' | 'unknown_user' | 'account_deleted';
 
 export type ChatPermission =
   { allowed: true } | { allowed: false; reason: ChatDenialReason };
@@ -10,6 +11,8 @@ export interface ChatPermissionInputs {
   receiverExists: boolean;
   senderBlockedReceiver: boolean;
   receiverBlockedSender: boolean;
+  senderDeleted: boolean;
+  receiverDeleted: boolean;
   outcome: PairOutcome | null | undefined;
 }
 
@@ -18,6 +21,10 @@ export function decideChatPermission(
 ): ChatPermission {
   if (!input.senderExists || !input.receiverExists) {
     return { allowed: false, reason: 'unknown_user' };
+  }
+
+  if (input.senderDeleted || input.receiverDeleted) {
+    return { allowed: false, reason: 'account_deleted' };
   }
 
   if (input.senderBlockedReceiver || input.receiverBlockedSender) {
@@ -50,6 +57,10 @@ export const CHAT_DENIAL_COPY: Record<ChatDenialReason, ChatErrorCopy> = {
   unknown_user: {
     code: 'USER_NOT_FOUND',
     message: 'You are not permitted to message this user',
+  },
+  account_deleted: {
+    code: 'ACCOUNT_DELETED',
+    message: 'This account is no longer available.',
   },
 };
 

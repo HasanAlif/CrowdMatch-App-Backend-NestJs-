@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  GoneException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -9,15 +10,22 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 
 import { User } from './schemas/user.schema';
+import { AccountStatus } from './user.types';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { InitialCompleteProfileDto } from './dto/initial-complete-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
+import {
+  DeleteAccountDto,
+  DELETE_CONFIRM_TEXT,
+} from './dto/delete-account.dto';
 import { ResolvedDevice } from '../auth/dto/device.dto';
 import { CloudinaryService } from '../utils/cloudinary/cloudinary.service';
+import { Notification } from '../notification/schemas/notification.schema';
+import { Match } from '../matching/schemas/match.schema';
 import {
   GATE_AGE_PREFERENCE,
   GATE_INTERESTED_IN_GENDERS,
@@ -28,6 +36,35 @@ import {
 const GATE_FIELDS =
   'pictureId picture totalVotes currentVotes interestedInGenders ' +
   'minAgePreference maxAgePreference maxDistanceKm pictureUpdateExpiresAt';
+
+const DELETION_UNSET_FIELDS = [
+  'email',
+  'phoneNumber',
+  'googleId',
+  'appleId',
+  'password',
+  'otp',
+  'otpExpiry',
+  'picture',
+  'pictureId',
+  'bio',
+  'location',
+  'address',
+  'dateOfBirth',
+  'age',
+  'gender',
+  'lastSeen',
+  'interestedInGenders',
+  'minAgePreference',
+  'maxAgePreference',
+  'maxDistanceKm',
+  'geoLocation',
+  'boostExpiresAt',
+  'boostEndsNotifyAt',
+  'pictureUpdateExpiresAt',
+];
+
+export const DELETED_USER_PLACEHOLDER_NAME = 'Deleted User';
 
 type GateUser = Pick<
   User,
@@ -48,6 +85,9 @@ export class UserService {
 
   constructor(
     @InjectModel(User.name) private userModel: Model<User>,
+    @InjectModel(Notification.name)
+    private readonly notificationModel: Model<Notification>,
+    @InjectModel(Match.name) private readonly matchModel: Model<Match>,
     private readonly cloudinaryService: CloudinaryService,
   ) {}
 
@@ -238,7 +278,7 @@ export class UserService {
 
     this.assertGate(
       dto.interestedInGenders !== undefined,
-      (user.interestedInGenders?.length ?? 0) > 0,
+      user.interestedInGenders != null,
       GATE_INTERESTED_IN_GENDERS,
       totalVotes,
     );
@@ -377,6 +417,16 @@ export class UserService {
         (err as Error).message ?? 'Failed to complete profile',
       );
     }
+  }
+
+  async getProfile(userId: string) {
+    return await this.userModel
+      .findById(userId)
+      .select(
+        'picture fullName age interestedInGenders minAgePreference maxAgePreference maxDistanceKm',
+      )
+      .lean()
+      .exec();
   }
 
   async updateProfile(
@@ -519,6 +569,170 @@ export class UserService {
       throw new InternalServerErrorException(
         (err as Error).message ?? 'Failed to change password',
       );
+    }
+  }
+
+  // ── Account deletion ──
+  async assertAccountActive(userId: string): Promise<void> {
+    const user = await this.userModel
+      .findById(userId)
+      .select('accountStatus')
+      .lean()
+      .exec();
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.accountStatus !== AccountStatus.Active) {
+      throw new ForbiddenException('This account is no longer active');
+    }
+  }
+
+  async deleteAccount(
+    userId: string,
+    dto: DeleteAccountDto,
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: Record<string, unknown>;
+  }> {
+    try {
+      const user = await this.userModel
+        .findById(userId)
+        .select('password accountStatus pictureId photos')
+        .lean()
+        .exec();
+
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      if (user.accountStatus === AccountStatus.Deleted) {
+        throw new GoneException('This account has already been deleted');
+      }
+
+      // 1. Confirm intent, before any write
+      if (user.password) {
+        if (!dto.password) {
+          throw new BadRequestException(
+            'Your current password is required to delete this account',
+          );
+        }
+
+        const isPasswordValid = await bcrypt.compare(
+          dto.password,
+          user.password,
+        );
+
+        if (!isPasswordValid) {
+          throw new BadRequestException('Current password is incorrect');
+        }
+      } else if (dto.confirmText !== DELETE_CONFIRM_TEXT) {
+        // Social auth — there is no password to verify, so require the phrase.
+        throw new BadRequestException(
+          `This account uses social sign-in. Send confirmText "${DELETE_CONFIRM_TEXT}" to delete it.`,
+        );
+      }
+
+      const deletedAt = new Date();
+
+      // 2. Tombstone FIRST — the account is disabled after this line
+      const tombstone = await this.updateUserById(
+        userId,
+        {
+          fullName: DELETED_USER_PLACEHOLDER_NAME,
+          accountStatus: AccountStatus.Deleted,
+          deletedAt,
+          isVerified: false,
+          photos: [],
+          devices: [],
+          blockedUsers: [],
+          isOnline: false,
+          isNotifyNewMatches: false,
+          isNotifyActivityReminders: false,
+        },
+        DELETION_UNSET_FIELDS,
+      );
+
+      if (!tombstone) {
+        throw new NotFoundException('User not found');
+      }
+
+      // 3. Secondary cleanup — each step independently retryable
+      await this.purgeNotifications(userId);
+      await this.expireActiveMatches(userId);
+      await this.destroyStoredImages(user.pictureId, user.photos);
+
+      return {
+        success: true,
+        message: 'Account deleted successfully',
+        data: { deletedAt },
+      };
+    } catch (err) {
+      if ((err as { status?: number }).status) throw err;
+      throw new InternalServerErrorException(
+        (err as Error).message ?? 'Failed to delete account',
+      );
+    }
+  }
+
+  private async purgeNotifications(userId: string): Promise<void> {
+    try {
+      await this.notificationModel
+        .deleteMany({ recipient: new Types.ObjectId(userId) })
+        .exec();
+    } catch (err) {
+      this.logger.error(
+        `Failed to purge notifications for deleted user ${userId}: ` +
+          ((err as Error).message ?? 'unknown error'),
+      );
+    }
+  }
+
+  private async expireActiveMatches(userId: string): Promise<void> {
+    const userOid = new Types.ObjectId(userId);
+    try {
+      await Promise.all([
+        this.matchModel
+          .updateMany(
+            { user1: userOid, isExpired: false },
+            { $set: { isExpired: true } },
+          )
+          .exec(),
+        this.matchModel
+          .updateMany(
+            { user2: userOid, isExpired: false },
+            { $set: { isExpired: true } },
+          )
+          .exec(),
+      ]);
+    } catch (err) {
+      this.logger.error(
+        `Failed to expire matches for deleted user ${userId}: ` +
+          ((err as Error).message ?? 'unknown error'),
+      );
+    }
+  }
+
+  private async destroyStoredImages(
+    pictureId?: string,
+    photos?: { publicId: string }[],
+  ): Promise<void> {
+    const publicIds = [
+      ...(pictureId ? [pictureId] : []),
+      ...(photos ?? []).map((p) => p.publicId).filter(Boolean),
+    ];
+
+    for (const publicId of publicIds) {
+      try {
+        await this.cloudinaryService.deleteImage(publicId);
+      } catch (err) {
+        this.logger.error(
+          `Failed to delete Cloudinary asset ${publicId}: ` +
+            ((err as Error).message ?? 'unknown error'),
+        );
+      }
     }
   }
 }

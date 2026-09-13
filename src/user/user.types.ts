@@ -20,6 +20,7 @@ export enum AccountStatus {
   Active = 'active',
   Suspended = 'suspended',
   Banned = 'banned',
+  Deleted = 'deleted',
 }
 
 export enum DevicePlatform {
