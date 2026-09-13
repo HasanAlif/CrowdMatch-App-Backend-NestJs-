@@ -13,7 +13,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 
 import { User } from './schemas/user.schema';
-import { AccountStatus } from './user.types';
+import { AccountStatus, AuthProvider } from './user.types';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { InitialCompleteProfileDto } from './dto/initial-complete-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -673,6 +673,52 @@ export class UserService {
       if ((err as { status?: number }).status) throw err;
       throw new InternalServerErrorException(
         (err as Error).message ?? 'Failed to delete account',
+      );
+    }
+  }
+
+  async checkAccountStatus(userId: string): Promise<{
+    success: boolean;
+    message: string;
+    data: {
+      accountStatus: AccountStatus;
+      authProvider: AuthProvider;
+      isSocialLogin: boolean;
+      deleteConfirmation: {
+        method: 'password' | 'confirmText';
+        confirmText?: string;
+      };
+    };
+  }> {
+    try {
+      const user = await this.userModel
+        .findById(userId)
+        .select('accountStatus authProvider password')
+        .lean()
+        .exec();
+
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      const hasPassword = Boolean(user.password);
+
+      return {
+        success: true,
+        message: 'Account status fetched successfully',
+        data: {
+          accountStatus: user.accountStatus,
+          authProvider: user.authProvider,
+          isSocialLogin: !hasPassword,
+          deleteConfirmation: hasPassword
+            ? { method: 'password' }
+            : { method: 'confirmText', confirmText: DELETE_CONFIRM_TEXT },
+        },
+      };
+    } catch (err) {
+      if ((err as { status?: number }).status) throw err;
+      throw new InternalServerErrorException(
+        (err as Error).message ?? 'Failed to get account status',
       );
     }
   }

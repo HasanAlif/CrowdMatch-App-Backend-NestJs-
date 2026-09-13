@@ -78,6 +78,14 @@ export class UserController {
     return this.userService.changePassword(userId, dto);
   }
 
+  // GET /user/account-status — account state + how deletion must be confirmed
+  @UseGuards(AuthGuard)
+  @Get('account-status')
+  checkAccountStatus(@Request() req: any) {
+    const userId = req.user.sub as string;
+    return this.userService.checkAccountStatus(userId);
+  }
+
   // DELETE /user/account — irreversibly delete the authenticated user's account
   @UseGuards(AuthGuard)
   @Delete('account')
