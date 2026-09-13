@@ -16,6 +16,7 @@ import { MatchCycleCheckpoint } from './schemas/match-cycle-checkpoint.schema';
 import { MatchedPair, PairOutcome } from './schemas/matched-pair.schema';
 import { User } from '../user/schemas/user.schema';
 import { AccountStatus } from '../user/user.types';
+import { UserService } from '../user/user.service';
 import { NotificationTriggerService } from '../notification/notification-trigger.service';
 import { normalisePair } from '../common/pair';
 import {
@@ -39,6 +40,8 @@ const BACKFILL_BATCH_SIZE = 1000;
 const CANDIDATE_BUILD_CONCURRENCY = 8;
 
 const MAX_CANDIDATES_PER_USER = 200;
+
+const MAX_CANDIDATES_RETRY = MAX_CANDIDATES_PER_USER * 5;
 
 const INSERT_CHUNK_SIZE = 2000;
 
@@ -97,6 +100,7 @@ export class MatchingService {
     @InjectModel(MatchedPair.name)
     private readonly matchedPairModel: Model<MatchedPair>,
     @InjectModel(User.name) private readonly userModel: Model<User>,
+    private readonly userService: UserService,
     @Optional()
     private readonly notifications?: NotificationTriggerService,
   ) {}
@@ -210,7 +214,7 @@ export class MatchingService {
     const userAge = this.getUserAge(user);
     if (userAge == null) return [];
 
-    const buildPipeline = (limit: number | null): PipelineStage[] => {
+    const buildPipeline = (limit: number): PipelineStage[] => {
       const stages: PipelineStage[] = [
         {
           $geoNear: {
@@ -236,7 +240,7 @@ export class MatchingService {
         },
       ];
 
-      if (limit !== null) stages.push({ $limit: limit });
+      stages.push({ $limit: limit });
 
       stages.push({
         $project: {
@@ -266,10 +270,13 @@ export class MatchingService {
 
     if (compatible.length === 0 && capWasBinding) {
       this.logger.warn(
-        `Candidate cap starved user ${user._id.toString()} — retrying uncapped`,
+        `Candidate cap starved user ${user._id.toString()} — retrying with a ` +
+          `widened cap of ${MAX_CANDIDATES_RETRY}`,
       );
       candidates = await this.userModel
-        .aggregate<EligibleUser & { dist_meters: number }>(buildPipeline(null))
+        .aggregate<EligibleUser & { dist_meters: number }>(
+          buildPipeline(MAX_CANDIDATES_RETRY),
+        )
         .exec();
       capWasBinding = false;
       compatible = this.filterCompatible(
@@ -819,13 +826,14 @@ export class MatchingService {
 
     const rows = await this.matchModel
       .find(filter)
-      .select('_id')
-      .sort({ createdAt: -1 })
+      .select('_id createdAt')
       .limit(MAX_BOOSTED_MATCHES_PER_FEED)
-      .lean()
+      .lean<{ _id: Types.ObjectId; createdAt: Date }[]>()
       .exec();
 
-    return rows.map((r) => r._id);
+    return rows
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .map((r) => r._id);
   }
 
   private mapFeedRows(rows: any[]): unknown[] {
@@ -941,8 +949,10 @@ export class MatchingService {
     const userOid = new Types.ObjectId(userId);
 
     const filter = {
-      isExpired: false,
-      $or: [{ user1: userOid }, { user2: userOid }],
+      $or: [
+        { user1: userOid, isExpired: false },
+        { user2: userOid, isExpired: false },
+      ],
     };
 
     const [total, rawMatches] = await Promise.all([
@@ -1001,6 +1011,10 @@ export class MatchingService {
     userId: string,
     decision: 'accepted' | 'rejected',
   ): Promise<{ matchId: string; myDecision: string; matchStatus: string }> {
+    // Same reasoning as castVote: a deleted account must not be able to accept
+    // a match and open a chat with a live user.
+    await this.userService.assertAccountActive(userId);
+
     const match = await this.matchModel.findById(matchId).exec();
 
     if (!match) {
@@ -1280,6 +1294,8 @@ export class MatchingService {
     voterId: string,
     voteType: 'positive' | 'negative',
   ): Promise<{ voteId: string; matchId: string; voteType: string }> {
+    await this.userService.assertAccountActive(voterId);
+
     const match = await this.matchModel
       .findById(matchId)
       .select('_id user1 user2 isExpired')

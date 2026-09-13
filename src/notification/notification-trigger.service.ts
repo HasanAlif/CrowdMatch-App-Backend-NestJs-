@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 
 import { User } from '../user/schemas/user.schema';
+import { AccountStatus } from '../user/user.types';
 import { Match } from '../matching/schemas/match.schema';
 import { Vote } from '../matching/schemas/vote.schema';
 import { NotificationType } from './schemas/notification.schema';
@@ -408,7 +409,26 @@ export class NotificationTriggerService {
       };
     }
 
-    const recipients = [...bodies.keys()].map((id) => new Types.ObjectId(id));
+    const candidateRecipients = [...bodies.keys()].map(
+      (id) => new Types.ObjectId(id),
+    );
+
+    const recipients = await this.activeRecipients(candidateRecipients);
+
+    if (recipients.length === 0) {
+      const elapsedMs = Date.now() - startedAt;
+      this.logger.log(
+        `Daily reminder: no active recipients after status filter ` +
+          `(${candidateRecipients.length} candidate(s)), ${elapsedMs}ms`,
+      );
+      return {
+        candidates: candidateIds.size,
+        notified: 0,
+        recordsCreated: 0,
+        pushed: 0,
+        elapsedMs,
+      };
+    }
 
     const res = await this.notifications.createAndPush(
       recipients,
@@ -423,17 +443,31 @@ export class NotificationTriggerService {
     const elapsedMs = Date.now() - startedAt;
 
     this.logger.log(
-      `Daily reminder: ${res.recordsCreated} record(s) for ${bodies.size} ` +
-        `user(s), ${res.pushed} push(es), ${elapsedMs}ms`,
+      `Daily reminder: ${res.recordsCreated} record(s) for ` +
+        `${recipients.length} user(s), ${res.pushed} push(es), ${elapsedMs}ms`,
     );
 
     return {
       candidates: candidateIds.size,
-      notified: bodies.size,
+      notified: recipients.length,
       recordsCreated: res.recordsCreated,
       pushed: res.pushed,
       elapsedMs,
     };
+  }
+
+  private async activeRecipients(
+    candidates: Types.ObjectId[],
+  ): Promise<Types.ObjectId[]> {
+    if (candidates.length === 0) return [];
+
+    const rows = await this.userModel
+      .find({ _id: { $in: candidates }, accountStatus: AccountStatus.Active })
+      .select({ _id: 1 })
+      .lean<{ _id: Types.ObjectId }[]>()
+      .exec();
+
+    return rows.map((r) => r._id);
   }
 
   async broadcast(title: string, message: string): Promise<BroadcastStats> {
@@ -445,9 +479,10 @@ export class NotificationTriggerService {
     let cursor: Types.ObjectId | null = null;
 
     for (;;) {
-      const filter: Record<string, unknown> = cursor
-        ? { _id: { $gt: cursor } }
-        : {};
+      const filter: Record<string, unknown> = {
+        accountStatus: AccountStatus.Active,
+        ...(cursor ? { _id: { $gt: cursor } } : {}),
+      };
 
       const page: { _id: Types.ObjectId }[] = await this.userModel
         .find(filter)

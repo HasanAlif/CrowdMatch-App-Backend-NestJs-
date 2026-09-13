@@ -15,11 +15,13 @@ import { MatchingService } from './matching.service';
 import { MatchingCron } from './matching.cron';
 import { MatchingController } from './matching.controller';
 import { NotificationModule } from '../notification/notification.module';
+import { UserModule } from '../user/user.module';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
     NotificationModule,
+    UserModule,
 
     MongooseModule.forFeature([
       { name: Match.name, schema: MatchSchema },
