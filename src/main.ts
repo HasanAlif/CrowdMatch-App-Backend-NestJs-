@@ -58,6 +58,8 @@ async function bootstrap() {
   );
   app.useGlobalFilters(new AllExceptionsFilter());
 
+  app.setGlobalPrefix('api');
+
   await app.listen(process.env.PORT ?? 8000);
 }
 
