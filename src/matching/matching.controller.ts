@@ -12,13 +12,14 @@ import {
 import { AuthGuard } from '../auth/auth.guard';
 import { MatchingService } from './matching.service';
 import { PaginationDto } from './dto/pagination.dto';
+import { MyMatchesQueryDto } from './dto/my-matches-query.dto';
 import { DecisionDto } from './dto/decision.dto';
 import { CastVoteDto } from './dto/cast-vote.dto';
 import { NextReward } from '../common/vote-reward-copy';
 
 /**
  * Route ordering:
- *   1. GET  /matching/mine             ← static (must be before :id)
+ *   1. GET  /matching/mine?matchId=<id> ← static (must be before :id)
  *   2. GET  /matching/mine/accepted    ← static
  *   3. GET  /matching/mine/vote-count  ← static
  *   4. GET  /matching                  ← root — voting feed
@@ -33,7 +34,7 @@ export class MatchingController {
   // ── 1. GET /matching/mine — my matches ──
   @Get('mine')
   async getMyMatches(
-    @Query() query: PaginationDto,
+    @Query() query: MyMatchesQueryDto,
     @Request() req: any,
   ): Promise<{
     success: boolean;
@@ -50,7 +51,12 @@ export class MatchingController {
   }> {
     const userId = req.user.sub as string;
     const { matches, total, page, limit, totalPages } =
-      await this.matchingService.getMyMatches(userId, query.page, query.limit);
+      await this.matchingService.getMyMatches(
+        userId,
+        query.page,
+        query.limit,
+        query.matchId,
+      );
 
     return {
       success: true,

@@ -946,6 +946,7 @@ export class MatchingService {
     userId: string,
     page: number,
     limit: number,
+    pinnedMatchId?: string,
   ): Promise<{
     matches: unknown[];
     total: number;
@@ -955,20 +956,23 @@ export class MatchingService {
   }> {
     const userOid = new Types.ObjectId(userId);
 
-    const filter = {
+    const baseFilter = {
       $or: [
         { user1: userOid, isExpired: false },
         { user2: userOid, isExpired: false },
       ],
     };
 
-    const [total, rawMatches] = await Promise.all([
-      this.matchModel.countDocuments(filter),
+    const runQuery = (
+      filter: Record<string, unknown>,
+      skip: number,
+      take: number,
+    ) =>
       this.matchModel
         .find(filter)
         .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
+        .skip(skip)
+        .limit(take)
         .populate({
           path: 'user1',
           select: '_id photos',
@@ -978,8 +982,48 @@ export class MatchingService {
           select: '_id photos',
         })
         .lean()
-        .exec(),
-    ]);
+        .exec();
+
+    const totalPromise = this.matchModel.countDocuments(baseFilter);
+
+    const pinnedOid = pinnedMatchId ? new Types.ObjectId(pinnedMatchId) : null;
+
+    const pinnedRow = pinnedOid
+      ? await this.matchModel
+          .findOne({ _id: pinnedOid, ...baseFilter })
+          .populate({
+            path: 'user1',
+            select: '_id photos',
+          })
+          .populate({
+            path: 'user2',
+            select: '_id photos',
+          })
+          .lean()
+          .exec()
+      : null;
+
+    const pinnedCount = pinnedRow ? 1 : 0;
+
+    const mainFilter: Record<string, unknown> = pinnedCount
+      ? { ...baseFilter, _id: { $ne: pinnedOid } }
+      : baseFilter;
+
+    const skip = (page - 1) * limit;
+
+    let rawMatches: any[];
+
+    if (pinnedCount && skip === 0) {
+      const remainder = limit - pinnedCount;
+      const topUp =
+        remainder > 0 ? await runQuery(mainFilter, 0, remainder) : [];
+
+      rawMatches = [pinnedRow, ...topUp];
+    } else {
+      rawMatches = await runQuery(mainFilter, skip - pinnedCount, limit);
+    }
+
+    const total = await totalPromise;
 
     const matches = rawMatches.map((match: any) => {
       const isUser1 = match.user1?._id?.toString() === userId;
