@@ -5,6 +5,7 @@ import {
   Logger,
   Patch,
   Post,
+  Query,
   Request,
   UploadedFile,
   UseGuards,
@@ -20,6 +21,9 @@ import { AdminService } from './admin.service';
 import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
 import { NotificationTriggerService } from 'src/notification/notification-trigger.service';
 import { BroadcastDto } from 'src/notification/dto/broadcast.dto';
+import { AdminDashboardService } from './admin-dashboard.service';
+import { MonthYearQueryDto } from './dto/month-year-query.dto';
+import { monthKeyToIndex } from 'src/common/dashboard-time';
 
 @Controller('admin')
 @UseGuards(AuthGuard, RolesGuard)
@@ -30,6 +34,7 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly notificationTriggers: NotificationTriggerService,
+    private readonly dashboard: AdminDashboardService,
   ) {}
 
   // GET /admin/profile
@@ -79,6 +84,58 @@ export class AdminController {
       success: true,
       message: 'Broadcast queued and is being delivered',
       data: { title: dto.title },
+    };
+  }
+
+  // ── Dashboard Overview ──
+
+  // GET /admin/statistics — headline counts with 7d-vs-prior-7d growth
+  @Get('statistics')
+  async getUserStatistics() {
+    const data = await this.dashboard.getUserStatistics();
+    return {
+      success: true,
+      message: 'User statistics retrieved successfully',
+      data,
+    };
+  }
+
+  // GET /admin/user-growth?month=jun&year=2026 — new registrations per day
+  @Get('user-growth')
+  async getDailyUserGrowth(@Query() query: MonthYearQueryDto) {
+    const data = await this.dashboard.getDailyUserGrowth(
+      monthKeyToIndex(query.month),
+      query.year,
+    );
+    return {
+      success: true,
+      message: 'Daily user growth retrieved successfully',
+      data,
+    };
+  }
+
+  // GET /admin/match-trend?month=jun&year=2026 — matches created per day
+  @Get('match-trend')
+  async getMatchCreationTrend(@Query() query: MonthYearQueryDto) {
+    const data = await this.dashboard.getMatchCreationTrend(
+      monthKeyToIndex(query.month),
+      query.year,
+    );
+    return {
+      success: true,
+      message: 'Match creation trend retrieved successfully',
+      data,
+    };
+  }
+
+  // GET /admin/recent-activity — last 24h of feed events, newest first
+  @Get('recent-activity')
+  async getRecentActivity() {
+    const data = await this.dashboard.getRecentActivity();
+    return {
+      success: true,
+      message: 'Recent activity retrieved successfully',
+      data,
     };
   }
 }

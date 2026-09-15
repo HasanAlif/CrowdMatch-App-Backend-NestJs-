@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 
@@ -6,6 +6,7 @@ import { User } from '../user/schemas/user.schema';
 import { AccountStatus } from '../user/user.types';
 import { Match } from '../matching/schemas/match.schema';
 import { Vote } from '../matching/schemas/vote.schema';
+import { ActivityLogService } from '../activity-log/activity-log.service';
 import { NotificationType } from './schemas/notification.schema';
 import {
   BROADCAST_PAGE_SIZE,
@@ -71,6 +72,8 @@ export class NotificationTriggerService {
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectModel(Match.name) private readonly matchModel: Model<Match>,
     @InjectModel(Vote.name) private readonly voteModel: Model<Vote>,
+    @Optional()
+    private readonly activityLog?: ActivityLogService,
   ) {}
 
   private async resolvePartners(
@@ -531,6 +534,15 @@ export class NotificationTriggerService {
       `Broadcast complete: ${usersProcessed} user(s), ${recordsCreated} ` +
         `record(s), ${pushed} push(es), ${elapsedMs}ms`,
     );
+
+    try {
+      this.activityLog?.recordBroadcastSent(recordsCreated);
+    } catch (err) {
+      this.logger.error(
+        'Broadcast activity log failed',
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
 
     return { usersProcessed, recordsCreated, pushed, elapsedMs };
   }

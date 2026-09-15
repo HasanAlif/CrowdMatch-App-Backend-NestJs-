@@ -17,11 +17,13 @@ import { NotificationReadService } from './notification-read.service';
 import { NotificationTriggerService } from './notification-trigger.service';
 import { NotificationController } from './notification.controller';
 import { NotificationCron } from './notification.cron';
+import { ActivityLogModule } from '../activity-log/activity-log.module';
 
 @Module({
   imports: [
     ConfigModule,
     ScheduleModule.forRoot(),
+    ActivityLogModule,
     MongooseModule.forFeature([
       { name: Notification.name, schema: NotificationSchema },
       { name: User.name, schema: UserSchema },

@@ -9,11 +9,13 @@ import { MailService } from './mail.service';
 import { SmsService } from './sms.service';
 import { SocialAuthService } from './social-auth.service';
 import { UserModule } from 'src/user/user.module';
+import { ActivityLogModule } from 'src/activity-log/activity-log.module';
 
 @Module({
   imports: [
     ConfigModule,
     UserModule,
+    ActivityLogModule,
 
     JwtModule.registerAsync({
       global: true,

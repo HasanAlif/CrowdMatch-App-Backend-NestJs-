@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -14,6 +15,7 @@ import { User } from 'src/user/schemas/user.schema';
 import { GoogleAuthDto } from 'src/auth/dto/googleAuth.dto';
 import { AppleAuthDto } from 'src/auth/dto/appleAuth.dto';
 import { resolveDevice, ResolvedDevice } from 'src/auth/dto/device.dto';
+import { ActivityLogService } from 'src/activity-log/activity-log.service';
 
 //----------------------------Types--------------------------------------
 /**
@@ -48,6 +50,8 @@ export class SocialAuthService {
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    @Optional()
+    private readonly activityLog?: ActivityLogService,
   ) {
     this.googleClient = new OAuth2Client(
       this.configService.get<string>('google.webClientId'),
@@ -206,6 +210,16 @@ export class SocialAuthService {
           isActive: true,
           role: Role.User,
         });
+
+        // Social sign-ins never pass through verifyOtp, so this branch is the
+        // only place they register. Emitted here and NOT on the email-linking
+        // branch above — linking a provider to an existing account is not
+        // joining.
+        try {
+          this.activityLog?.recordUserJoined(user.fullName, String(user._id));
+        } catch {
+          // already logged inside the activity-log service
+        }
       }
 
       // 4. Capture the device, keyed by deviceId.

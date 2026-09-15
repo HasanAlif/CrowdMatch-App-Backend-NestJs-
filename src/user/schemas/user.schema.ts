@@ -214,6 +214,8 @@ UserSchema.index(
 
 UserSchema.index({ 'devices.deviceId': 1 }, { sparse: true });
 
+UserSchema.index({ createdAt: 1, accountStatus: 1 });
+
 UserSchema.pre<UserDocument>('save', async function () {
   if (!this.displayId) {
     const CounterModel = this.db.model('Counter') as any;

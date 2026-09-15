@@ -18,6 +18,7 @@ import { User } from '../user/schemas/user.schema';
 import { AccountStatus } from '../user/user.types';
 import { UserService } from '../user/user.service';
 import { NotificationTriggerService } from '../notification/notification-trigger.service';
+import { ActivityLogService } from '../activity-log/activity-log.service';
 import { normalisePair } from '../common/pair';
 import {
   BOOST_DURATION_MS,
@@ -103,6 +104,8 @@ export class MatchingService {
     private readonly userService: UserService,
     @Optional()
     private readonly notifications?: NotificationTriggerService,
+    @Optional()
+    private readonly activityLog?: ActivityLogService,
   ) {}
 
   getUserAge(user: { age?: number; dateOfBirth?: Date }): number | null {
@@ -685,6 +688,10 @@ export class MatchingService {
     this.logger.log(
       `Cycle complete: expired ${expireResult.modifiedCount}, generated ${pairsCreated} new matches`,
     );
+
+    // Cron-generated matches write NO activity row — not per match, not a
+    // per-cycle summary. Only organic, one-at-a-time events belong in the feed;
+    // the 80-vote bonus match is the sole match_created writer.
 
     await this.checkpointModel
       .findOneAndUpdate(
@@ -1350,6 +1357,17 @@ export class MatchingService {
     };
   }
 
+  private safeActivity(emit: () => void): void {
+    try {
+      emit();
+    } catch (err) {
+      this.logger.error(
+        'Activity log emission failed',
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
+  }
+
   private async applyVoteRewards(
     voterOid: Types.ObjectId,
   ): Promise<number | null> {
@@ -1399,7 +1417,7 @@ export class MatchingService {
         {
           returnDocument: 'before',
           updatePipeline: true,
-          projection: { currentVotes: 1, totalVotes: 1 },
+          projection: { currentVotes: 1, totalVotes: 1, fullName: 1 },
         },
       )
       .lean()
@@ -1424,6 +1442,12 @@ export class MatchingService {
           err instanceof Error ? err.stack : String(err),
         ),
       );
+
+    if (BOOST_THRESHOLDS.includes(newCurrent)) {
+      this.safeActivity(() =>
+        this.activityLog?.recordBoostMilestone(before.fullName, voterOid),
+      );
+    }
 
     if (newCurrent === REWARD_EXTRA_MATCH) {
       void this.generateBonusMatchForUser(voterOid).catch((err) =>
@@ -1545,7 +1569,33 @@ export class MatchingService {
         ),
       );
 
+    void this.recordBonusMatchActivity(u1, u2).catch((err) =>
+      this.logger.error(
+        `${tag}: activity log failed`,
+        err instanceof Error ? err.stack : String(err),
+      ),
+    );
+
     this.logger.log(`${tag}: paired with ${chosen.toString()}`);
+  }
+
+  private async recordBonusMatchActivity(
+    u1: Types.ObjectId,
+    u2: Types.ObjectId,
+  ): Promise<void> {
+    if (!this.activityLog) return;
+
+    const users = await this.userModel
+      .find({ _id: { $in: [u1, u2] } })
+      .select({ fullName: 1 })
+      .lean<{ _id: Types.ObjectId; fullName?: string }[]>()
+      .exec();
+
+    const byId = new Map(users.map((u) => [u._id.toString(), u.fullName]));
+    this.activityLog.recordBonusMatch(
+      byId.get(u1.toString()),
+      byId.get(u2.toString()),
+    );
   }
 
   // MY VOTE COUNT  —  GET /matching/mine/vote-count

@@ -32,6 +32,8 @@ import {
   GATE_MAX_DISTANCE_KM,
   votesUntilPictureUpdate,
 } from '../common/vote-thresholds';
+import { DELETED_USER_PLACEHOLDER_NAME } from '../common/user-constants';
+import { ActivityLog } from '../activity-log/schemas/activity-log.schema';
 
 const GATE_FIELDS =
   'pictureId picture totalVotes currentVotes interestedInGenders ' +
@@ -64,7 +66,7 @@ const DELETION_UNSET_FIELDS = [
   'pictureUpdateExpiresAt',
 ];
 
-export const DELETED_USER_PLACEHOLDER_NAME = 'Deleted User';
+export { DELETED_USER_PLACEHOLDER_NAME };
 
 type GateUser = Pick<
   User,
@@ -88,6 +90,8 @@ export class UserService {
     @InjectModel(Notification.name)
     private readonly notificationModel: Model<Notification>,
     @InjectModel(Match.name) private readonly matchModel: Model<Match>,
+    @InjectModel(ActivityLog.name)
+    private readonly activityLogModel: Model<ActivityLog>,
     private readonly cloudinaryService: CloudinaryService,
   ) {}
 
@@ -661,6 +665,7 @@ export class UserService {
 
       // 3. Secondary cleanup — each step independently retryable
       await this.purgeNotifications(userId);
+      await this.purgeActivityLogs(userId);
       await this.expireActiveMatches(userId);
       await this.destroyStoredImages(user.pictureId, user.photos);
 
@@ -731,6 +736,19 @@ export class UserService {
     } catch (err) {
       this.logger.error(
         `Failed to purge notifications for deleted user ${userId}: ` +
+          ((err as Error).message ?? 'unknown error'),
+      );
+    }
+  }
+
+  private async purgeActivityLogs(userId: string): Promise<void> {
+    try {
+      await this.activityLogModel
+        .deleteMany({ subject: new Types.ObjectId(userId) })
+        .exec();
+    } catch (err) {
+      this.logger.error(
+        `Failed to purge activity logs for deleted user ${userId}: ` +
           ((err as Error).message ?? 'unknown error'),
       );
     }

@@ -76,3 +76,5 @@ MatchSchema.index(
     partialFilterExpression: { isExpired: false },
   },
 );
+
+MatchSchema.index({ createdAt: 1 });

@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   InternalServerErrorException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
@@ -24,6 +25,7 @@ import { VerifyForgotPasswordOtpDto } from './dto/verifyForgotPasswordOtp.dto';
 import { ResetPasswordDto } from './dto/resetPassword.dto';
 import { RegisterWithPhoneDto } from './dto/registerPhone.dto';
 import { resolveDevice } from './dto/device.dto';
+import { ActivityLogService } from '../activity-log/activity-log.service';
 
 // Exported so the demo seed hashes passwords with the exact same cost factor real
 // registration uses — a seeded user that cannot log in is a useless seeded user.
@@ -38,6 +40,8 @@ export class AuthService {
     private readonly mailService: MailService,
     private readonly smsService: SmsService,
     private readonly configService: ConfigService,
+    @Optional()
+    private readonly activityLog?: ActivityLogService,
   ) {}
 
   async registerWithEmail(dto: RegisterWithEmailDto) {
@@ -216,6 +220,15 @@ export class AuthService {
         String(updatedUser!._id),
         resolveDevice(dto.device),
       );
+
+      try {
+        this.activityLog?.recordUserJoined(
+          updatedUser!.fullName,
+          String(updatedUser!._id),
+        );
+      } catch {
+        // already logged inside the activity-log service
+      }
 
       const payload = { sub: updatedUser!._id, role: updatedUser!.role };
       const accessToken = await this.jwtService.signAsync(payload);

@@ -24,3 +24,5 @@ export const VoteSchema = SchemaFactory.createForClass(Vote);
 
 VoteSchema.index({ voter: 1, match: 1 }, { unique: true });
 VoteSchema.index({ voter: 1, createdAt: -1 });
+
+VoteSchema.index({ createdAt: 1, voter: 1 });

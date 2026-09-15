@@ -9,6 +9,10 @@ import {
   NotificationSchema,
 } from '../notification/schemas/notification.schema';
 import { Match, MatchSchema } from '../matching/schemas/match.schema';
+import {
+  ActivityLog,
+  ActivityLogSchema,
+} from '../activity-log/schemas/activity-log.schema';
 
 @Module({
   imports: [
@@ -17,6 +21,7 @@ import { Match, MatchSchema } from '../matching/schemas/match.schema';
       { name: COUNTER_MODEL_NAME, schema: CounterSchema },
       { name: Notification.name, schema: NotificationSchema },
       { name: Match.name, schema: MatchSchema },
+      { name: ActivityLog.name, schema: ActivityLogSchema },
     ]),
   ],
   controllers: [UserController],

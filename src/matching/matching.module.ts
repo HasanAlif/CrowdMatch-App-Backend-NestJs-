@@ -16,12 +16,14 @@ import { MatchingCron } from './matching.cron';
 import { MatchingController } from './matching.controller';
 import { NotificationModule } from '../notification/notification.module';
 import { UserModule } from '../user/user.module';
+import { ActivityLogModule } from '../activity-log/activity-log.module';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
     NotificationModule,
     UserModule,
+    ActivityLogModule,
 
     MongooseModule.forFeature([
       { name: Match.name, schema: MatchSchema },
