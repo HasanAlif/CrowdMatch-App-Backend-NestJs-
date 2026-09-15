@@ -14,6 +14,7 @@ import { MatchingService } from './matching.service';
 import { PaginationDto } from './dto/pagination.dto';
 import { DecisionDto } from './dto/decision.dto';
 import { CastVoteDto } from './dto/cast-vote.dto';
+import { NextReward } from '../common/vote-reward-copy';
 
 /**
  * Route ordering:
@@ -105,6 +106,7 @@ export class MatchingController {
     data: {
       currentVotes: number;
       nextTargetVotes: number;
+      nextReward: NextReward;
     };
   }> {
     const userId = req.user.sub as string;

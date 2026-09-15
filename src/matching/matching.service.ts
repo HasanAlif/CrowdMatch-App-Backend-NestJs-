@@ -23,11 +23,11 @@ import { normalisePair } from '../common/pair';
 import {
   BOOST_DURATION_MS,
   BOOST_THRESHOLDS,
-  nextTargetVotes,
   PICTURE_WINDOW_MS,
   REWARD_EXTRA_MATCH,
   VOTE_CYCLE_LENGTH,
 } from '../common/vote-thresholds';
+import { nextReward, NextReward } from '../common/vote-reward-copy';
 
 const SOFT_MAX_MATCHES_PER_CYCLE = 2;
 
@@ -1602,6 +1602,7 @@ export class MatchingService {
   async getMyVoteCount(userId: string): Promise<{
     currentVotes: number;
     nextTargetVotes: number;
+    nextReward: NextReward;
   }> {
     const user = await this.userModel
       .findById(userId)
@@ -1614,10 +1615,12 @@ export class MatchingService {
     }
 
     const currentVotes = user.currentVotes ?? 0;
+    const reward = nextReward(user.totalVotes ?? 0, currentVotes);
 
     return {
       currentVotes,
-      nextTargetVotes: nextTargetVotes(user.totalVotes ?? 0, currentVotes),
+      nextTargetVotes: reward.threshold,
+      nextReward: reward,
     };
   }
 }
