@@ -190,7 +190,7 @@ export const UserSchema = SchemaFactory.createForClass(User);
 
 UserSchema.index({ geoLocation: '2dsphere' }, { sparse: true });
 
-UserSchema.index({ accountStatus: 1 });
+UserSchema.index({ accountStatus: 1, createdAt: -1, _id: -1 });
 
 UserSchema.index({ gender: 1 }, { sparse: true });
 

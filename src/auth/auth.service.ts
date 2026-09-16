@@ -26,9 +26,8 @@ import { ResetPasswordDto } from './dto/resetPassword.dto';
 import { RegisterWithPhoneDto } from './dto/registerPhone.dto';
 import { resolveDevice } from './dto/device.dto';
 import { ActivityLogService } from '../activity-log/activity-log.service';
+import { loginDenialMessage } from './auth-copy';
 
-// Exported so the demo seed hashes passwords with the exact same cost factor real
-// registration uses — a seeded user that cannot log in is a useless seeded user.
 export const SALT_ROUNDS = 10;
 
 @Injectable()
@@ -194,6 +193,11 @@ export class AuthService {
         throw new BadRequestException('Account is already verified');
       }
 
+      const denial = loginDenialMessage(user.accountStatus, user.isActive);
+      if (denial) {
+        throw new UnauthorizedException(denial);
+      }
+
       if (!user.otp || !user.otpExpiry) {
         throw new BadRequestException(
           'No OTP found. Please request a new one via /auth/resend-otp',
@@ -338,8 +342,9 @@ export class AuthService {
       if (!user.isVerified) {
         throw new UnauthorizedException('Please verify your account first');
       }
-      if (!user.isActive) {
-        throw new UnauthorizedException('Account is inactive');
+      const denial = loginDenialMessage(user.accountStatus, user.isActive);
+      if (denial) {
+        throw new UnauthorizedException(denial);
       }
 
       if (!user.password) {

@@ -16,31 +16,22 @@ import { GoogleAuthDto } from 'src/auth/dto/googleAuth.dto';
 import { AppleAuthDto } from 'src/auth/dto/appleAuth.dto';
 import { resolveDevice, ResolvedDevice } from 'src/auth/dto/device.dto';
 import { ActivityLogService } from 'src/activity-log/activity-log.service';
+import { loginDenialMessage } from 'src/auth/auth-copy';
 
-//----------------------------Types--------------------------------------
-/**
- * Normalised payload produced after verifying a social identity token.
- * Fields mirror what both Google and Apple provide in their JWTs.
- */
 export interface TSocialVerifiedPayload {
-  providerId: string; // Google sub / Apple sub
-  email?: string; // may be absent on Apple with private relay
+  providerId: string;
+  email?: string;
   firstName?: string;
   lastName?: string;
-  image?: string; // Google profile picture URL
+  image?: string;
 }
 
-/**
- * Provider-specific config passed into findOrLinkUserByProvider to drive
- * the upsert logic without duplicating it for each provider.
- */
 interface TSocialProviderConfig {
   provider: AuthProvider.Google | AuthProvider.Apple;
   providerIdField: 'googleId' | 'appleId';
   device?: ResolvedDevice | null;
 }
 
-//--------------------------Service---------------------------------------
 @Injectable()
 export class SocialAuthService {
   private readonly googleClient: OAuth2Client;
@@ -58,11 +49,6 @@ export class SocialAuthService {
     );
   }
 
-  //-----------------Token verification----------------------------------
-  /**
-   * Verifies a Google ID token using google-auth-library.
-   * Validates the audience against GOOGLE_WEB_CLIENT_ID.
-   */
   async verifyGoogleIdToken(idToken: string): Promise<TSocialVerifiedPayload> {
     try {
       const ticket = await this.googleClient.verifyIdToken({
@@ -83,7 +69,6 @@ export class SocialAuthService {
         image: payload.picture,
       };
     } catch (error) {
-      // Re-throw Nest exceptions as-is; wrap library errors
       if (
         error instanceof UnauthorizedException ||
         error instanceof BadRequestException
@@ -94,10 +79,6 @@ export class SocialAuthService {
     }
   }
 
-  /**
-   * Verifies an Apple identity token (JWT) against Apple's public JWKS.
-   * Validates audience against APPLE_BUNDLE_ID.
-   */
   async verifyAppleIdentityToken(
     identityToken: string,
   ): Promise<TSocialVerifiedPayload> {
@@ -131,16 +112,6 @@ export class SocialAuthService {
     }
   }
 
-  /**
-   * Finds or creates a user for a social sign-in provider.
-   *
-   * Logic (mirrors original Express.js reference):
-   * 1. Look up by providerId field (googleId / appleId).
-   * 2. If not found, check whether a local/other-provider user exists with the
-   *    same email — if so, link the provider to that account.
-   * 3. If still not found, create a brand-new user.
-   * 4. Always update fcmTokens ($set / add) and return the user.
-   */
   private async findOrLinkUserByProvider(
     payload: TSocialVerifiedPayload,
     config: TSocialProviderConfig,
@@ -148,26 +119,25 @@ export class SocialAuthService {
     const { provider, providerIdField, device } = config;
 
     try {
-      // 1. Look up by provider-specific ID
       let user =
         providerIdField === 'googleId'
           ? await this.userService.findByGoogleId(payload.providerId)
           : await this.userService.findByAppleId(payload.providerId);
 
-      // isActive gate — applies on ALL lookup paths, including returning users
-      if (user && !user.isActive) {
-        throw new UnauthorizedException('Account is inactive');
+      if (user) {
+        const denial = loginDenialMessage(user.accountStatus, user.isActive);
+        if (denial) {
+          throw new UnauthorizedException(denial);
+        }
       }
 
       if (!user && payload.email) {
-        // 2. Cross-provider account linking by verified email
         user = await this.userService.findByEmail(payload.email);
         if (user) {
-          // isActive gate on email-linked account too
-          if (!user.isActive) {
-            throw new UnauthorizedException('Account is inactive');
+          const denial = loginDenialMessage(user.accountStatus, user.isActive);
+          if (denial) {
+            throw new UnauthorizedException(denial);
           }
-          // Link the social provider to the existing account
           const linkData: Partial<User> = {
             authProvider: provider,
             googleId:
@@ -186,8 +156,6 @@ export class SocialAuthService {
       }
 
       if (!user) {
-        // 3. Create a brand-new user
-        // Fallback name generation when the provider supplies no name
         const fallbackName = payload.email
           ? payload.email.split('@')[0]
           : `User${Date.now()}`;
@@ -199,22 +167,17 @@ export class SocialAuthService {
         user = await this.userService.createUser({
           fullName,
           email: payload.email,
-          // Set the provider-specific ID field explicitly
           googleId:
             providerIdField === 'googleId' ? payload.providerId : undefined,
           appleId:
             providerIdField === 'appleId' ? payload.providerId : undefined,
           picture: payload.image,
           authProvider: provider,
-          isVerified: true, // social sign-in users are pre-verified
+          isVerified: true,
           isActive: true,
           role: Role.User,
         });
 
-        // Social sign-ins never pass through verifyOtp, so this branch is the
-        // only place they register. Emitted here and NOT on the email-linking
-        // branch above — linking a provider to an existing account is not
-        // joining.
         try {
           this.activityLog?.recordUserJoined(user.fullName, String(user._id));
         } catch {
@@ -222,7 +185,6 @@ export class SocialAuthService {
         }
       }
 
-      // 4. Capture the device, keyed by deviceId.
       await this.userService.captureDeviceSafely(
         String(user._id),
         device ?? null,
@@ -245,7 +207,6 @@ export class SocialAuthService {
     }
   }
 
-  /** Handles the full Google Sign-In flow: verify token → find/create user → sign JWT. */
   async handleGoogleAuthPayload(dto: GoogleAuthDto) {
     try {
       const payload = await this.verifyGoogleIdToken(dto.idToken);
@@ -290,13 +251,10 @@ export class SocialAuthService {
     }
   }
 
-  /** Handles the full Apple Sign-In flow: verify token → find/create user → sign JWT. */
   async handleAppleAuthPayload(dto: AppleAuthDto) {
     try {
       const payload = await this.verifyAppleIdentityToken(dto.identityToken);
 
-      // Apple only sends fullName on the very first sign-in.
-      // Parse "First Last" or "First" into firstName / lastName.
       if (dto.fullName && !payload.firstName) {
         const parts = dto.fullName.trim().split(/\s+/);
         payload.firstName = parts[0];

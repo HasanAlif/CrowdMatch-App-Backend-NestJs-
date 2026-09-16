@@ -128,3 +128,20 @@ export function buildDailySeries(
 
   return series;
 }
+
+export function zonedDateKey(
+  instant: Date,
+  timeZone: string = DASHBOARD_TIMEZONE,
+): string {
+  const parts: Record<string, string> = {};
+  for (const part of new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(instant)) {
+    parts[part.type] = part.value;
+  }
+
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}

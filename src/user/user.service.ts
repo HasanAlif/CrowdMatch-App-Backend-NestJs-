@@ -754,7 +754,7 @@ export class UserService {
     }
   }
 
-  private async expireActiveMatches(userId: string): Promise<void> {
+  async expireActiveMatches(userId: string): Promise<void> {
     const userOid = new Types.ObjectId(userId);
     try {
       await Promise.all([

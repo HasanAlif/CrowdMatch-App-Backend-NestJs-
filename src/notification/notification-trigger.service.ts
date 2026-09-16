@@ -241,14 +241,20 @@ export class NotificationTriggerService {
     for (;;) {
       const due = await this.userModel
         .find({ boostEndsNotifyAt: { $lte: now } })
-        .select({ _id: 1 })
+        .select({ _id: 1, accountStatus: 1 })
         .limit(BOOST_SWEEP_PAGE_SIZE)
-        .lean<{ _id: Types.ObjectId }[]>()
+        .lean<{ _id: Types.ObjectId; accountStatus: AccountStatus }[]>()
         .exec();
 
       if (due.length === 0) break;
 
       const ids = due.map((u) => u._id);
+
+      const notifiable = new Set(
+        due
+          .filter((u) => u.accountStatus === AccountStatus.Active)
+          .map((u) => u._id.toString()),
+      );
 
       const claim = await this.userModel
         .updateMany(
@@ -278,10 +284,16 @@ export class NotificationTriggerService {
         );
       }
 
-      if (claimedIds.length > 0) {
+      claimedTotal += claimedIds.length;
+
+      const announceIds = claimedIds.filter((id) =>
+        notifiable.has(id.toString()),
+      );
+
+      if (announceIds.length > 0) {
         try {
           const res = await this.notifications.createAndPush(
-            claimedIds,
+            announceIds,
             () => ({
               type: NotificationType.BoostEnded,
               ...BOOST_ENDED_COPY,
@@ -296,7 +308,6 @@ export class NotificationTriggerService {
               (err instanceof Error ? err.message : String(err)),
           );
         }
-        claimedTotal += claimedIds.length;
       }
 
       if (due.length < BOOST_SWEEP_PAGE_SIZE) break;

@@ -25,6 +25,7 @@ export const NON_DELETED_STATUSES = [
   AccountStatus.Active,
   AccountStatus.Suspended,
   AccountStatus.Banned,
+  AccountStatus.Blocked,
 ];
 
 export interface StatMetric {

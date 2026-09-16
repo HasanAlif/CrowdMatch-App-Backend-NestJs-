@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Logger,
+  Param,
   Patch,
   Post,
   Query,
@@ -24,6 +25,12 @@ import { BroadcastDto } from 'src/notification/dto/broadcast.dto';
 import { AdminDashboardService } from './admin-dashboard.service';
 import { MonthYearQueryDto } from './dto/month-year-query.dto';
 import { monthKeyToIndex } from 'src/common/dashboard-time';
+import { AdminUserService } from './admin-user.service';
+import {
+  ListUsersQueryDto,
+  SearchUsersQueryDto,
+} from './dto/list-users-query.dto';
+import { UpdateUserStatusDto } from './dto/update-user-status.dto';
 
 @Controller('admin')
 @UseGuards(AuthGuard, RolesGuard)
@@ -35,6 +42,7 @@ export class AdminController {
     private readonly adminService: AdminService,
     private readonly notificationTriggers: NotificationTriggerService,
     private readonly dashboard: AdminDashboardService,
+    private readonly users: AdminUserService,
   ) {}
 
   // GET /admin/profile
@@ -135,6 +143,47 @@ export class AdminController {
     return {
       success: true,
       message: 'Recent activity retrieved successfully',
+      data,
+    };
+  }
+
+  // ── User Management ──
+
+  // GET /admin/users?status=all|active|blocked&page=1&limit=50
+  @Get('users')
+  async listUsers(@Query() query: ListUsersQueryDto) {
+    const data = await this.users.listUsers(query);
+    return {
+      success: true,
+      message: 'Users retrieved successfully',
+      data,
+    };
+  }
+
+  // GET /admin/users/search?searchTerm=dylan&status=all&page=1&limit=50
+  @Get('users/search')
+  async searchUsers(@Query() query: SearchUsersQueryDto) {
+    const data = await this.users.searchUsers(query);
+    return {
+      success: true,
+      message: 'Users retrieved successfully',
+      data,
+    };
+  }
+
+  // PATCH /admin/users/:userId — { status: 'block' | 'unblock' }
+  @Patch('users/:userId')
+  async setUserStatus(
+    @Param('userId') userId: string,
+    @Body() dto: UpdateUserStatusDto,
+  ) {
+    const data = await this.users.setUserStatus(userId, dto.status);
+    return {
+      success: true,
+      message:
+        dto.status === 'block'
+          ? 'User blocked successfully'
+          : 'User unblocked successfully',
       data,
     };
   }
