@@ -53,6 +53,8 @@ export default () => {
       apiSecret: process.env.TWILIO_API_SECRET,
       authToken: process.env.TWILIO_AUTH_TOKEN,
       phoneNumber: process.env.TWILIO_PHONE_NUMBER,
+      messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID,
+      defaultCountry: process.env.TWILIO_DEFAULT_COUNTRY,
       alphaSenderId: process.env.TWILIO_ALPHA_SENDER_ID,
     },
   };
