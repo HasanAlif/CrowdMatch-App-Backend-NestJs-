@@ -381,6 +381,7 @@ export class UserService {
       const update: Partial<User> = {};
       update.fullName = dto.fullName;
       update.age = dto.age;
+      update.gender = dto.gender;
 
       const consumesWindow = photoFile
         ? this.assertPictureGate(currentUser)
@@ -413,6 +414,7 @@ export class UserService {
           picture: updated?.picture ?? null,
           fullName: updated?.fullName ?? null,
           age: updated?.age ?? null,
+          gender: updated?.gender ?? null,
         },
       };
     } catch (err) {
