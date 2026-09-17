@@ -465,7 +465,7 @@ export class UserService {
       if (dto.phoneNumber !== undefined) update.phoneNumber = dto.phoneNumber;
       if (dto.address !== undefined) update.address = dto.address;
       if (dto.gender !== undefined) update.gender = dto.gender;
-      if (dto.dateOfBirth !== undefined) update.dateOfBirth = dto.dateOfBirth;
+      if (dto.age !== undefined) update.age = dto.age;
       if (dto.bio !== undefined) update.bio = dto.bio;
       if (dto.interestedInGenders !== undefined)
         update.interestedInGenders = dto.interestedInGenders;

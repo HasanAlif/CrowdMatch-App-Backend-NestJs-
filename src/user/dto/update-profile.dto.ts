@@ -4,7 +4,7 @@ import {
   MinLength,
   MaxLength,
   IsEnum,
-  IsDate,
+  IsInt,
   IsNumber,
   Min,
   Max,
@@ -35,9 +35,11 @@ export class UpdateProfileDto {
   gender?: Gender;
 
   @IsOptional()
-  @Type(() => Date)
-  @IsDate({ message: 'dateOfBirth must be a valid date' })
-  dateOfBirth?: Date;
+  @Type(() => Number)
+  @IsInt({ message: 'age must be a whole number' })
+  @Min(12, { message: 'age must be at least 12' })
+  @Max(120, { message: 'age must not exceed 120' })
+  age?: number;
 
   @IsOptional()
   @IsString()
