@@ -206,7 +206,7 @@ export class AdminVotingService {
         this.voteModel
           .find({})
           .select(VOTE_ROW_PROJECTION)
-          .sort({ createdAt: -1, voter: -1 })
+          .sort({ createdAt: -1, voter: -1, _id: -1 })
           .skip((page - 1) * limit)
           .limit(limit)
           .lean<LeanVoteRow[]>()

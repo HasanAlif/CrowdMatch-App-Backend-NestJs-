@@ -5,6 +5,7 @@ export enum ActivityType {
   UserJoined = 'user_joined',
   MatchCreated = 'match_created',
   UserBlocked = 'user_blocked',
+  MatchRemoved = 'match_removed',
   BroadcastSent = 'broadcast_sent',
   Milestone = 'milestone',
 }

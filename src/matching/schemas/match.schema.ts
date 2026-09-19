@@ -61,6 +61,12 @@ export class Match {
 
   @Prop({ type: Number, default: 0 })
   decisionVersion: number;
+
+  @Prop({ type: Boolean })
+  removedByAdmin?: boolean;
+
+  @Prop({ type: Date })
+  removedAt?: Date;
 }
 
 export const MatchSchema = SchemaFactory.createForClass(Match);
@@ -77,4 +83,4 @@ MatchSchema.index(
   },
 );
 
-MatchSchema.index({ createdAt: 1 });
+MatchSchema.index({ createdAt: 1, _id: 1 });

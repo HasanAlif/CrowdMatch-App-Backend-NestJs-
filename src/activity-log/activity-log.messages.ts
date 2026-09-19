@@ -54,6 +54,13 @@ export function userBlockedMessage(fullName?: string | null): string {
   return `User ${abbreviateName(fullName)} was blocked`;
 }
 
+export function matchRemovedMessage(
+  nameA?: string | null,
+  nameB?: string | null,
+): string {
+  return `Match removed: ${abbreviateName(nameA)} & ${abbreviateName(nameB)}`;
+}
+
 export function broadcastSentMessage(recipients: number): string {
   const noun = recipients === 1 ? 'user' : 'users';
   return `Broadcast sent to ${formatCompactCount(recipients)} ${noun}`;

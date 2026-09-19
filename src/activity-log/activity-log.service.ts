@@ -7,6 +7,7 @@ import {
   boostMilestoneMessage,
   bonusMatchMessage,
   broadcastSentMessage,
+  matchRemovedMessage,
   userBlockedMessage,
   userJoinedMessage,
 } from './activity-log.messages';
@@ -89,6 +90,13 @@ export class ActivityLogService {
     userId: Types.ObjectId | string,
   ): void {
     this.emit(ActivityType.UserBlocked, userBlockedMessage(fullName), userId);
+  }
+
+  recordMatchRemoved(
+    nameA: string | null | undefined,
+    nameB: string | null | undefined,
+  ): void {
+    this.emit(ActivityType.MatchRemoved, matchRemovedMessage(nameA, nameB));
   }
 
   async getRecent(

@@ -6,6 +6,7 @@ import { AdminService } from './admin.service';
 import { AdminDashboardService } from './admin-dashboard.service';
 import { AdminUserService } from './admin-user.service';
 import { AdminVotingService } from './admin-voting.service';
+import { AdminMatchService } from './admin-match.service';
 import { UserModule } from 'src/user/user.module';
 import { AuthModule } from 'src/auth/auth.module';
 import { NotificationModule } from 'src/notification/notification.module';
@@ -27,6 +28,7 @@ import { Vote, VoteSchema } from 'src/matching/schemas/vote.schema';
     AdminDashboardService,
     AdminUserService,
     AdminVotingService,
+    AdminMatchService,
   ],
 })
 export class AdminModule {}

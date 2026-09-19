@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Logger,
   Param,
@@ -33,6 +34,8 @@ import {
 import { UpdateUserStatusDto } from './dto/update-user-status.dto';
 import { AdminVotingService } from './admin-voting.service';
 import { VoteRecordsQueryDto } from './dto/vote-records-query.dto';
+import { AdminMatchService } from './admin-match.service';
+import { MatchRecordsQueryDto } from './dto/match-records-query.dto';
 
 @Controller('admin')
 @UseGuards(AuthGuard, RolesGuard)
@@ -46,6 +49,7 @@ export class AdminController {
     private readonly dashboard: AdminDashboardService,
     private readonly users: AdminUserService,
     private readonly voting: AdminVotingService,
+    private readonly matches: AdminMatchService,
   ) {}
 
   // GET /admin/profile
@@ -235,6 +239,45 @@ export class AdminController {
       message: 'Vote records retrieved successfully',
       data: records,
       pagination,
+    };
+  }
+
+  // ── Match Management ──
+
+  // GET /admin/match-count — total (approximate), active, removed
+  @Get('match-count')
+  async getMatchCount() {
+    const data = await this.matches.getMatchCount();
+    return {
+      success: true,
+      message: 'Match count retrieved successfully',
+      data,
+    };
+  }
+
+  // GET /admin/match-records?page=1&limit=50 — all matches, newest first
+  @Get('match-records')
+  async getMatchRecords(@Query() query: MatchRecordsQueryDto) {
+    const { records, pagination } = await this.matches.getMatchRecords(query);
+    return {
+      success: true,
+      message: 'Match records retrieved successfully',
+      data: records,
+      pagination,
+    };
+  }
+
+  // DELETE /admin/matches/:matchId — takes the REAL _id, never the MCH- label.
+  // Removes the match from the feed; never hard-deletes it.
+  @Delete('matches/:matchId')
+  async removeMatch(@Param('matchId') matchId: string) {
+    const data = await this.matches.removeMatch(matchId);
+    return {
+      success: true,
+      message: data.alreadyRemoved
+        ? 'Match was already removed'
+        : 'Match removed successfully',
+      data,
     };
   }
 }
