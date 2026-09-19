@@ -9,6 +9,7 @@ import { Model, Types } from 'mongoose';
 import { User } from 'src/user/schemas/user.schema';
 import { Match } from 'src/matching/schemas/match.schema';
 import { zonedDateKey } from 'src/common/dashboard-time';
+import { matchDisplayId } from 'src/common/display-id';
 import { ActivityLogService } from 'src/activity-log/activity-log.service';
 import { MatchRecordsQueryDto } from './dto/match-records-query.dto';
 
@@ -94,10 +95,6 @@ const REMOVAL_PROJECTION = {
   removedByAdmin: 1,
   removedAt: 1,
 } as const;
-
-export function matchDisplayId(id: Types.ObjectId | string): string {
-  return `MCH-${id.toString().slice(0, 5)}`;
-}
 
 @Injectable()
 export class AdminMatchService {

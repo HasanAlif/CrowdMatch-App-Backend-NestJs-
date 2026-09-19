@@ -11,6 +11,7 @@ import {
   DASHBOARD_TIMEZONE,
   zonedDayWindow,
 } from 'src/common/dashboard-time';
+import { voteDisplayId } from 'src/common/display-id';
 import { VoteRecordsQueryDto } from './dto/vote-records-query.dto';
 
 /**
@@ -301,7 +302,7 @@ export class AdminVotingService {
       : null;
 
     return {
-      voteId: `VT-${vote._id.toString().slice(0, 5)}`,
+      voteId: voteDisplayId(vote._id),
       voter: displayIdById.get(vote.voter.toString()) ?? null,
       target: first && second ? `${first} & ${second}` : null,
       voteType: vote.voteType,
