@@ -1,4 +1,9 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  Optional,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 
@@ -7,7 +12,14 @@ import { AccountStatus } from '../user/user.types';
 import { Match } from '../matching/schemas/match.schema';
 import { Vote } from '../matching/schemas/vote.schema';
 import { ActivityLogService } from '../activity-log/activity-log.service';
+import { zonedDateKey } from '../common/dashboard-time';
 import { NotificationType } from './schemas/notification.schema';
+import {
+  BROADCAST_ERROR_MAX_LENGTH,
+  BroadcastHistory,
+  BroadcastStatus,
+} from './schemas/broadcast-history.schema';
+import { NotificationHistoryQueryDto } from './dto/notification-history-query.dto';
 import {
   BROADCAST_PAGE_SIZE,
   NotificationContent,
@@ -44,6 +56,29 @@ export interface BroadcastStats {
   elapsedMs: number;
 }
 
+export interface BroadcastHistoryRow {
+  title: string;
+  date: string | null;
+  status: BroadcastStatus;
+}
+
+export interface BroadcastHistoryResult {
+  records: BroadcastHistoryRow[];
+  pagination: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
+interface LeanBroadcastHistoryRow {
+  _id: Types.ObjectId;
+  title: string;
+  status: BroadcastStatus;
+  createdAt?: Date | null;
+}
+
 export interface BoostSweepStats {
   claimed: number;
   recordsCreated: number;
@@ -63,6 +98,12 @@ export const BOOST_SWEEP_PAGE_SIZE = 1000;
 
 const PARTNER_FIELDS = { fullName: 1, picture: 1, 'photos.url': 1 };
 
+const BROADCAST_HISTORY_PROJECTION = {
+  title: 1,
+  status: 1,
+  createdAt: 1,
+} as const;
+
 @Injectable()
 export class NotificationTriggerService {
   private readonly logger = new Logger(NotificationTriggerService.name);
@@ -72,6 +113,8 @@ export class NotificationTriggerService {
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectModel(Match.name) private readonly matchModel: Model<Match>,
     @InjectModel(Vote.name) private readonly voteModel: Model<Vote>,
+    @InjectModel(BroadcastHistory.name)
+    private readonly broadcastHistoryModel: Model<BroadcastHistory>,
     @Optional()
     private readonly activityLog?: ActivityLogService,
   ) {}
@@ -484,60 +527,137 @@ export class NotificationTriggerService {
     return rows.map((r) => r._id);
   }
 
+  private async openBroadcastHistory(
+    title: string,
+    message: string,
+  ): Promise<Types.ObjectId | null> {
+    try {
+      const doc = await this.broadcastHistoryModel.create({
+        title,
+        message,
+        status: BroadcastStatus.Sending,
+      });
+      return doc._id;
+    } catch (err) {
+      this.logger.error(
+        'Broadcast history record could not be opened: ' +
+          (err instanceof Error ? err.message : String(err)),
+      );
+      return null;
+    }
+  }
+
+  private async closeBroadcastHistory(
+    historyId: Types.ObjectId | null,
+    status: BroadcastStatus,
+    stats: BroadcastStats & { failedPages: number; error?: string },
+  ): Promise<void> {
+    if (!historyId) return;
+
+    try {
+      await this.broadcastHistoryModel
+        .updateOne(
+          { _id: historyId },
+          {
+            $set: {
+              status,
+              usersProcessed: stats.usersProcessed,
+              recordsCreated: stats.recordsCreated,
+              pushed: stats.pushed,
+              failedPages: stats.failedPages,
+              elapsedMs: stats.elapsedMs,
+              completedAt: new Date(),
+              ...(stats.error
+                ? { error: stats.error.slice(0, BROADCAST_ERROR_MAX_LENGTH) }
+                : {}),
+            },
+          },
+        )
+        .exec();
+    } catch (err) {
+      this.logger.error(
+        'Broadcast history record could not be closed: ' +
+          (err instanceof Error ? err.message : String(err)),
+      );
+    }
+  }
+
   async broadcast(title: string, message: string): Promise<BroadcastStats> {
     const startedAt = Date.now();
     let usersProcessed = 0;
     let recordsCreated = 0;
     let pushed = 0;
+    let failedPages = 0;
+    let firstError: string | undefined;
+
+    const historyId = await this.openBroadcastHistory(title, message);
 
     let cursor: Types.ObjectId | null = null;
 
-    for (;;) {
-      const filter: Record<string, unknown> = {
-        accountStatus: AccountStatus.Active,
-        ...(cursor ? { _id: { $gt: cursor } } : {}),
-      };
+    try {
+      for (;;) {
+        const filter: Record<string, unknown> = {
+          accountStatus: AccountStatus.Active,
+          ...(cursor ? { _id: { $gt: cursor } } : {}),
+        };
 
-      const page: { _id: Types.ObjectId }[] = await this.userModel
-        .find(filter)
-        .select({ _id: 1 })
-        .sort({ _id: 1 })
-        .limit(BROADCAST_PAGE_SIZE)
-        .lean<{ _id: Types.ObjectId }[]>()
-        .exec();
+        const page: { _id: Types.ObjectId }[] = await this.userModel
+          .find(filter)
+          .select({ _id: 1 })
+          .sort({ _id: 1 })
+          .limit(BROADCAST_PAGE_SIZE)
+          .lean<{ _id: Types.ObjectId }[]>()
+          .exec();
 
-      if (page.length === 0) break;
+        if (page.length === 0) break;
 
-      const ids = page.map((u) => u._id);
+        const ids = page.map((u) => u._id);
 
-      try {
-        const res = await this.notifications.createAndPush(
-          ids,
-          () => ({
-            type: NotificationType.AdminBroadcast,
-            title,
-            body: message,
-          }),
-          null,
+        try {
+          const res = await this.notifications.createAndPush(
+            ids,
+            () => ({
+              type: NotificationType.AdminBroadcast,
+              title,
+              body: message,
+            }),
+            null,
+          );
+          recordsCreated += res.recordsCreated;
+          pushed += res.pushed;
+        } catch (err) {
+          failedPages += 1;
+          const reason = err instanceof Error ? err.message : String(err);
+          firstError ??= reason;
+          this.logger.error(
+            `Broadcast page starting at ${ids[0].toString()} failed: ${reason}`,
+          );
+        }
+
+        usersProcessed += page.length;
+        cursor = ids[ids.length - 1];
+
+        this.logger.log(
+          `Broadcast progress: ${usersProcessed} user(s) processed, ` +
+            `${recordsCreated} record(s), ${pushed} push(es)`,
         );
-        recordsCreated += res.recordsCreated;
-        pushed += res.pushed;
-      } catch (err) {
-        this.logger.error(
-          `Broadcast page starting at ${ids[0].toString()} failed: ` +
-            (err instanceof Error ? err.message : String(err)),
-        );
+
+        if (page.length < BROADCAST_PAGE_SIZE) break;
       }
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      firstError ??= reason;
 
-      usersProcessed += page.length;
-      cursor = ids[ids.length - 1];
+      await this.closeBroadcastHistory(historyId, BroadcastStatus.Failed, {
+        usersProcessed,
+        recordsCreated,
+        pushed,
+        elapsedMs: Date.now() - startedAt,
+        failedPages,
+        error: firstError,
+      });
 
-      this.logger.log(
-        `Broadcast progress: ${usersProcessed} user(s) processed, ` +
-          `${recordsCreated} record(s), ${pushed} push(es)`,
-      );
-
-      if (page.length < BROADCAST_PAGE_SIZE) break;
+      throw err;
     }
 
     const elapsedMs = Date.now() - startedAt;
@@ -545,6 +665,20 @@ export class NotificationTriggerService {
       `Broadcast complete: ${usersProcessed} user(s), ${recordsCreated} ` +
         `record(s), ${pushed} push(es), ${elapsedMs}ms`,
     );
+
+    const status =
+      usersProcessed > 0 && recordsCreated === 0
+        ? BroadcastStatus.Failed
+        : BroadcastStatus.Delivered;
+
+    await this.closeBroadcastHistory(historyId, status, {
+      usersProcessed,
+      recordsCreated,
+      pushed,
+      elapsedMs,
+      failedPages,
+      error: firstError,
+    });
 
     try {
       this.activityLog?.recordBroadcastSent(recordsCreated);
@@ -556,5 +690,46 @@ export class NotificationTriggerService {
     }
 
     return { usersProcessed, recordsCreated, pushed, elapsedMs };
+  }
+
+  async getNotificationHistory(
+    query: NotificationHistoryQueryDto,
+  ): Promise<BroadcastHistoryResult> {
+    try {
+      const { page, limit } = query;
+
+      const [total, broadcasts] = await Promise.all([
+        this.broadcastHistoryModel.countDocuments({}).exec(),
+        this.broadcastHistoryModel
+          .find({})
+          .select(BROADCAST_HISTORY_PROJECTION)
+          .sort({ createdAt: -1, _id: -1 })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .lean<LeanBroadcastHistoryRow[]>()
+          .exec(),
+      ]);
+
+      const pagination = {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit) || 0,
+      };
+
+      return {
+        records: broadcasts.map((broadcast) => ({
+          title: broadcast.title,
+          date: broadcast.createdAt ? zonedDateKey(broadcast.createdAt) : null,
+          status: broadcast.status,
+        })),
+        pagination,
+      };
+    } catch (err) {
+      if ((err as { status?: number }).status) throw err;
+      throw new InternalServerErrorException(
+        'Failed to load notification history',
+      );
+    }
   }
 }

@@ -23,6 +23,7 @@ import { AdminService } from './admin.service';
 import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
 import { NotificationTriggerService } from 'src/notification/notification-trigger.service';
 import { BroadcastDto } from 'src/notification/dto/broadcast.dto';
+import { NotificationHistoryQueryDto } from 'src/notification/dto/notification-history-query.dto';
 import { AdminDashboardService } from './admin-dashboard.service';
 import { MonthYearQueryDto } from './dto/month-year-query.dto';
 import { monthKeyToIndex } from 'src/common/dashboard-time';
@@ -76,6 +77,8 @@ export class AdminController {
     return this.adminService.updateAdminProfileInfo(userId, dto, picture);
   }
 
+  // ── Notifications ──
+
   // POST /admin/notifications/broadcast — push to every user
   @Post('notifications/broadcast')
   broadcast(@Body() dto: BroadcastDto) {
@@ -99,6 +102,19 @@ export class AdminController {
       success: true,
       message: 'Broadcast queued and is being delivered',
       data: { title: dto.title },
+    };
+  }
+
+  // GET /admin/notifications/history — past broadcasts, newest first
+  @Get('notifications/history')
+  async getNotificationHistory(@Query() query: NotificationHistoryQueryDto) {
+    const { records, pagination } =
+      await this.notificationTriggers.getNotificationHistory(query);
+    return {
+      success: true,
+      message: 'Notification history retrieved successfully',
+      data: records,
+      pagination,
     };
   }
 

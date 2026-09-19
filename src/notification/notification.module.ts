@@ -7,6 +7,10 @@ import {
   Notification,
   NotificationSchema,
 } from './schemas/notification.schema';
+import {
+  BroadcastHistory,
+  BroadcastHistorySchema,
+} from './schemas/broadcast-history.schema';
 import { User, UserSchema } from '../user/schemas/user.schema';
 import { Match, MatchSchema } from '../matching/schemas/match.schema';
 import { Vote, VoteSchema } from '../matching/schemas/vote.schema';
@@ -26,6 +30,7 @@ import { ActivityLogModule } from '../activity-log/activity-log.module';
     ActivityLogModule,
     MongooseModule.forFeature([
       { name: Notification.name, schema: NotificationSchema },
+      { name: BroadcastHistory.name, schema: BroadcastHistorySchema },
       { name: User.name, schema: UserSchema },
       { name: Match.name, schema: MatchSchema },
       { name: Vote.name, schema: VoteSchema },
