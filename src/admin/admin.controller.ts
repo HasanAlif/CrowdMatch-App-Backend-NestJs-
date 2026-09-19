@@ -31,6 +31,8 @@ import {
   SearchUsersQueryDto,
 } from './dto/list-users-query.dto';
 import { UpdateUserStatusDto } from './dto/update-user-status.dto';
+import { AdminVotingService } from './admin-voting.service';
+import { VoteRecordsQueryDto } from './dto/vote-records-query.dto';
 
 @Controller('admin')
 @UseGuards(AuthGuard, RolesGuard)
@@ -43,6 +45,7 @@ export class AdminController {
     private readonly notificationTriggers: NotificationTriggerService,
     private readonly dashboard: AdminDashboardService,
     private readonly users: AdminUserService,
+    private readonly voting: AdminVotingService,
   ) {}
 
   // GET /admin/profile
@@ -185,6 +188,53 @@ export class AdminController {
           ? 'User blocked successfully'
           : 'User unblocked successfully',
       data,
+    };
+  }
+
+  // ── Voting Management ──
+
+  // GET /admin/vote-count — lifetime totals, split by vote type
+  @Get('vote-count')
+  async getVoteCount() {
+    const data = await this.voting.getVoteCount();
+    return {
+      success: true,
+      message: 'Vote count retrieved successfully',
+      data,
+    };
+  }
+
+  // GET /admin/vote-distribution — positive/negative split, rates summing to 100
+  @Get('vote-distribution')
+  async getVoteDistribution() {
+    const data = await this.voting.voteDistribution();
+    return {
+      success: true,
+      message: 'Vote distribution retrieved successfully',
+      data,
+    };
+  }
+
+  // GET /admin/voting-trend — total votes per day for the last 7 days
+  @Get('voting-trend')
+  async getDailyVotingTrend() {
+    const data = await this.voting.getDailyVotingTrend();
+    return {
+      success: true,
+      message: 'Daily voting trend retrieved successfully',
+      data,
+    };
+  }
+
+  // GET /admin/vote-records?page=1&limit=50
+  @Get('vote-records')
+  async getVoteRecords(@Query() query: VoteRecordsQueryDto) {
+    const { records, pagination } = await this.voting.getVoteRecords(query);
+    return {
+      success: true,
+      message: 'Vote records retrieved successfully',
+      data: records,
+      pagination,
     };
   }
 }

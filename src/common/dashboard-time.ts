@@ -72,11 +72,11 @@ function zoneOffsetMs(instant: Date, timeZone: string): number {
   return asUtc - instant.getTime();
 }
 
-function zonedMidnightToUtc(
+export function zonedMidnightToUtc(
   year: number,
   monthIndex: number,
   day: number,
-  timeZone: string,
+  timeZone: string = DASHBOARD_TIMEZONE,
 ): Date {
   const guess = Date.UTC(year, monthIndex, day);
   const firstPass = guess - zoneOffsetMs(new Date(guess), timeZone);
@@ -124,6 +124,69 @@ export function buildDailySeries(
 
   for (let day = 1; day <= total; day++) {
     series[`${monthName} ${day}`] = byDay.get(day) ?? 0;
+  }
+
+  return series;
+}
+
+export const WEEKDAY_NAMES = [
+  'Sun',
+  'Mon',
+  'Tue',
+  'Wed',
+  'Thu',
+  'Fri',
+  'Sat',
+] as const;
+
+export interface ZonedDayWindow {
+  start: Date;
+  end: Date;
+  dayKeys: string[];
+}
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+export function zonedDayWindow(
+  instant: Date,
+  days: number,
+  timeZone: string = DASHBOARD_TIMEZONE,
+): ZonedDayWindow {
+  const [year, month, day] = zonedDateKey(instant, timeZone)
+    .split('-')
+    .map(Number);
+
+  const dayKeys: string[] = [];
+  for (let back = days - 1; back >= 0; back--) {
+    const civil = new Date(Date.UTC(year, month - 1, day - back));
+    dayKeys.push(
+      `${civil.getUTCFullYear()}-${pad2(civil.getUTCMonth() + 1)}-` +
+        `${pad2(civil.getUTCDate())}`,
+    );
+  }
+
+  return {
+    start: zonedMidnightToUtc(year, month - 1, day - (days - 1), timeZone),
+    end: zonedMidnightToUtc(year, month - 1, day + 1, timeZone),
+    dayKeys,
+  };
+}
+
+export function buildWeekdaySeries(
+  rows: DailyBucketRow[],
+  dayKeys: string[],
+): Record<string, number> {
+  const byKey = new Map<string, number>();
+  for (const row of rows) {
+    byKey.set(row._id, (byKey.get(row._id) ?? 0) + row.count);
+  }
+
+  const series: Record<string, number> = {};
+  for (const key of dayKeys) {
+    const [year, month, day] = key.split('-').map(Number);
+    const weekday =
+      WEEKDAY_NAMES[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
+    series[weekday] = byKey.get(key) ?? 0;
   }
 
   return series;
