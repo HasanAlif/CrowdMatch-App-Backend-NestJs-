@@ -18,6 +18,7 @@ import { Roles } from 'src/auth/roles.decorator';
 import { Role } from 'src/user/user.types';
 import { AdminService } from './admin.service';
 import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
+import { UpdateAdminPasswordDto } from './dto/update-admin-password.dto';
 import { NotificationTriggerService } from 'src/notification/notification-trigger.service';
 import { BroadcastDto } from 'src/notification/dto/broadcast.dto';
 import { NotificationHistoryQueryDto } from 'src/notification/dto/notification-history-query.dto';
@@ -70,6 +71,26 @@ export class AdminController {
     if (result.data.requireReLogin) {
       res.clearCookie('accessToken');
     }
+
+    return result;
+  }
+
+  // PATCH /admin/change-password — change own password, then end the session
+  @Patch('change-password')
+  async updateAdminPassword(
+    @Body() dto: UpdateAdminPasswordDto,
+    @Request() req: any,
+    @Res({ passthrough: true }) res: any,
+  ) {
+    const userId = req.user.sub as string;
+    const result = await this.adminService.updateAdminPassword(
+      userId,
+      dto.currentPassword,
+      dto.newPassword,
+      dto.confirmNewPassword,
+    );
+
+    res.clearCookie('accessToken');
 
     return result;
   }

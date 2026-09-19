@@ -132,4 +132,74 @@ export class AdminService {
       );
     }
   }
+
+  // PATCH /admin/change-password
+  async updateAdminPassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    confirmNewPassword: string,
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: Record<string, unknown>;
+  }> {
+    try {
+      const currentUser = await this.userModel
+        .findById(userId)
+        .select('password')
+        .lean()
+        .exec();
+
+      if (!currentUser) {
+        throw new NotFoundException('Admin user not found');
+      }
+
+      if (!currentUser.password) {
+        throw new BadRequestException(
+          'This account uses social sign-in and has no password to change.',
+        );
+      }
+
+      if (newPassword !== confirmNewPassword) {
+        throw new BadRequestException('Passwords do not match');
+      }
+
+      const isCurrentPasswordValid = await bcrypt.compare(
+        currentPassword,
+        currentUser.password,
+      );
+      if (!isCurrentPasswordValid) {
+        throw new UnauthorizedException('Current password is incorrect');
+      }
+
+      const isSamePassword = await bcrypt.compare(
+        newPassword,
+        currentUser.password,
+      );
+      if (isSamePassword) {
+        throw new BadRequestException(
+          'New password must be different from the current password',
+        );
+      }
+
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+      await this.userModel
+        .findByIdAndUpdate(userId, { $set: { password: hashedPassword } })
+        .exec();
+
+      return {
+        success: true,
+        message:
+          'Password changed. Please log in again with your new password.',
+        data: { requireReLogin: true },
+      };
+    } catch (err) {
+      if ((err as { status?: number }).status) throw err;
+      throw new InternalServerErrorException(
+        (err as Error).message ?? 'Failed to change admin password',
+      );
+    }
+  }
 }
