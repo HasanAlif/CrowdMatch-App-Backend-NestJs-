@@ -9,12 +9,9 @@ import {
   Post,
   Query,
   Request,
-  UploadedFile,
+  Res,
   UseGuards,
-  UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { memoryStorage } from 'multer';
 import { AuthGuard } from 'src/auth/auth.guard';
 import { RolesGuard } from 'src/auth/roles.guard';
 import { Roles } from 'src/auth/roles.decorator';
@@ -60,21 +57,21 @@ export class AdminController {
     return this.adminService.getAdminProfileInfoForUpdate(userId);
   }
 
-  // PATCH /admin/profile — update own fullName and/or picture (multipart/form-data)
+  // PATCH /admin/profile
   @Patch('profile')
-  @UseInterceptors(
-    FileInterceptor('picture', {
-      storage: memoryStorage(),
-      limits: { fileSize: 10 * 1024 * 1024 },
-    }),
-  )
-  updateAdminProfile(
-    @UploadedFile() picture: Express.Multer.File,
+  async updateAdminProfile(
     @Body() dto: UpdateAdminProfileDto,
     @Request() req: any,
+    @Res({ passthrough: true }) res: any,
   ) {
     const userId = req.user.sub as string;
-    return this.adminService.updateAdminProfileInfo(userId, dto, picture);
+    const result = await this.adminService.updateAdminProfileInfo(userId, dto);
+
+    if (result.data.requireReLogin) {
+      res.clearCookie('accessToken');
+    }
+
+    return result;
   }
 
   // ── Notifications ──

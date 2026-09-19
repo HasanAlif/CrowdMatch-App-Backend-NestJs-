@@ -1,14 +1,16 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import * as bcrypt from 'bcrypt';
 
 import { User } from 'src/user/schemas/user.schema';
 import { MailService } from 'src/auth/mail.service';
-import { CloudinaryService } from 'src/utils/cloudinary/cloudinary.service';
 import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
 import { Model } from 'mongoose';
 
@@ -19,14 +21,13 @@ export class AdminService {
   constructor(
     @InjectModel(User.name) private userModel: Model<User>,
     private readonly mailService: MailService,
-    private readonly cloudinaryService: CloudinaryService,
   ) {}
 
   // GET /admin/profile
   async getAdminProfileInfoForUpdate(userId: string) {
     const user = await this.userModel
       .findById(userId)
-      .select('pictureId picture fullName')
+      .select('fullName email')
       .lean()
       .exec();
     if (!user) {
@@ -34,7 +35,7 @@ export class AdminService {
     }
     return {
       fullName: user.fullName,
-      picture: user.picture,
+      email: user.email ?? null,
     };
   }
 
@@ -42,7 +43,6 @@ export class AdminService {
   async updateAdminProfileInfo(
     userId: string,
     dto: UpdateAdminProfileDto,
-    pictureFile?: Express.Multer.File,
   ): Promise<{
     success: boolean;
     message: string;
@@ -52,7 +52,7 @@ export class AdminService {
       // Fetch only the fields we need — minimise document exposure
       const currentUser = await this.userModel
         .findById(userId)
-        .select('pictureId picture fullName')
+        .select('fullName email password')
         .lean()
         .exec();
 
@@ -61,32 +61,45 @@ export class AdminService {
       }
 
       // Guard: at least one field must be provided
-      if (!dto.fullName && !pictureFile) {
+      if (!dto.fullName && !dto.email) {
         throw new BadRequestException(
-          'Provide at least one field to update (fullName or picture)',
+          'Provide at least one field to update (fullName or email)',
         );
       }
 
       const update: Partial<User> = {};
+      let emailChanged = false;
 
       if (dto.fullName !== undefined) {
         update.fullName = dto.fullName;
       }
 
-      if (pictureFile) {
-        // Upload new image first
-        const { url, publicId } = await this.cloudinaryService.uploadImage(
-          pictureFile.buffer,
-          'admin-profile-pictures',
-        );
-
-        // Delete old image after successful upload to avoid orphaned assets
-        if (currentUser.pictureId) {
-          await this.cloudinaryService.deleteImage(currentUser.pictureId);
+      if (dto.email !== undefined) {
+        if (!currentUser.password) {
+          throw new BadRequestException(
+            'This account has no password set; email cannot be changed here',
+          );
         }
 
-        update.picture = url;
-        update.pictureId = publicId;
+        const passwordMatches = await bcrypt.compare(
+          dto.currentPassword ?? '',
+          currentUser.password,
+        );
+        if (!passwordMatches) {
+          throw new UnauthorizedException('Current password is incorrect');
+        }
+
+        if (dto.email !== currentUser.email) {
+          const taken = await this.userModel
+            .exists({ email: dto.email, _id: { $ne: userId } })
+            .exec();
+          if (taken) {
+            throw new ConflictException('Email is already in use');
+          }
+
+          update.email = dto.email;
+          emailChanged = true;
+        }
       }
 
       const updated = await this.userModel
@@ -99,14 +112,21 @@ export class AdminService {
 
       return {
         success: true,
-        message: 'Admin profile updated successfully',
+        message: emailChanged
+          ? 'Email updated. Please log in again with your new email.'
+          : 'Admin profile updated successfully',
         data: {
           fullName: updated?.fullName ?? null,
-          picture: updated?.picture ?? null,
+          email: updated?.email ?? null,
+          requireReLogin: emailChanged,
         },
       };
     } catch (err) {
-      if ((err as { status?: number }).status) throw err;
+      const e = err as { status?: number; code?: number };
+      if (e.code === 11000) {
+        throw new ConflictException('Email is already in use');
+      }
+      if (e.status) throw err;
       throw new InternalServerErrorException(
         (err as Error).message ?? 'Failed to update admin profile',
       );
