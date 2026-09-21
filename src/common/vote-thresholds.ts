@@ -32,21 +32,16 @@ export const CYCLE_REWARD_LADDER: number[] = [
   VOTE_CYCLE_LENGTH,
 ];
 
-/**
- * On the FIRST pass the ladder is 7 → 10 → 30 → 50 → 80 → 100 → 200. Once the
- * one-time gates are earned they drop out permanently, so every later cycle runs
- * 50 → 80 → 100 → 200 and restarts.
- */
 export function nextTargetVotes(
   totalVotes: number,
   currentVotes: number,
 ): number {
   for (const gate of ONE_TIME_GATE_LADDER) {
-    if (totalVotes < gate) return gate;
+    if (totalVotes <= gate) return gate;
   }
 
   for (const reward of CYCLE_REWARD_LADDER) {
-    if (currentVotes < reward) return reward;
+    if (currentVotes <= reward) return reward;
   }
 
   return VOTE_CYCLE_LENGTH;
