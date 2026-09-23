@@ -957,6 +957,7 @@ export class MatchingService {
     const userOid = new Types.ObjectId(userId);
 
     const baseFilter = {
+      matchStatus: MatchStatus.Pending,
       $or: [
         { user1: userOid, isExpired: false },
         { user2: userOid, isExpired: false },
@@ -1181,30 +1182,13 @@ export class MatchingService {
       outcome: PairOutcome.Mutual,
     };
 
-    const awaitingFilter = {
-      isExpired: false,
-      $or: [
-        {
-          user1: userOid,
-          user1Decision: MatchDecision.Accepted,
-          user2Decision: MatchDecision.Pending,
-        },
-        {
-          user2: userOid,
-          user2Decision: MatchDecision.Accepted,
-          user1Decision: MatchDecision.Pending,
-        },
-      ],
-    };
-
     // Whichever side of the pair is not me.
     const otherUserId = {
       $cond: [{ $eq: ['$user1', userOid] }, '$user2', '$user1'],
     };
 
-    const [mutualCount, awaitingCount, rows] = await Promise.all([
+    const [total, rows] = await Promise.all([
       this.matchedPairModel.countDocuments(mutualFilter),
-      this.matchModel.countDocuments(awaitingFilter),
       this.matchedPairModel
         .aggregate([
           { $match: mutualFilter },
@@ -1215,23 +1199,6 @@ export class MatchingService {
               status: { $literal: MatchStatus.Mutual },
               matchId: { $literal: null },
               sortAt: { $ifNull: ['$lastMatchedAt', '$firstMatchedAt'] },
-            },
-          },
-          {
-            $unionWith: {
-              coll: this.matchModel.collection.name,
-              pipeline: [
-                { $match: awaitingFilter },
-                {
-                  $project: {
-                    _id: 0,
-                    otherUserId,
-                    status: { $literal: MatchStatus.Pending },
-                    matchId: '$_id',
-                    sortAt: '$createdAt',
-                  },
-                },
-              ],
             },
           },
           { $sort: { sortAt: -1 } },
@@ -1253,8 +1220,6 @@ export class MatchingService {
         ])
         .exec(),
     ]);
-
-    const total = mutualCount + awaitingCount;
 
     const matches = rows.map((row: any) => ({
       matchId: row.matchId ?? null,

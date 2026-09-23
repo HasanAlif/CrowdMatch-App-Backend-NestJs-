@@ -68,7 +68,7 @@ export class MatchingController {
     };
   }
 
-  // ── 2. GET /matching/mine/accepted — people I accepted ──
+  // ── 2. GET /matching/mine/accepted — mutual matches ──
   @Get('mine/accepted')
   async getMyAcceptedMatches(
     @Query() query: PaginationDto,
