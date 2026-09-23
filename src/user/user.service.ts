@@ -13,7 +13,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 
 import { User } from './schemas/user.schema';
-import { AccountStatus, AuthProvider } from './user.types';
+import { AccountStatus, AuthProvider, Gender } from './user.types';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { InitialCompleteProfileDto } from './dto/initial-complete-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -433,6 +433,26 @@ export class UserService {
       )
       .lean()
       .exec();
+  }
+
+  async getMyGenderAndGenderInterest(userId: string): Promise<{
+    gender: Gender | null;
+    interestedInGenders: Gender | null;
+  }> {
+    const user = await this.userModel
+      .findById(userId)
+      .select('gender interestedInGenders')
+      .lean()
+      .exec();
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    return {
+      gender: user.gender ?? null,
+      interestedInGenders: user.interestedInGenders ?? null,
+    };
   }
 
   async updateProfile(

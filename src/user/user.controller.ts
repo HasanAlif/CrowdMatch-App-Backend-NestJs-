@@ -52,6 +52,20 @@ export class UserController {
     return this.userService.getProfile(userId);
   }
 
+  // GET /user/gender-interest
+  @UseGuards(AuthGuard)
+  @Get('gender-interest')
+  async getMyGenderAndGenderInterest(@Request() req: any) {
+    const userId = req.user.sub as string;
+    const data = await this.userService.getMyGenderAndGenderInterest(userId);
+
+    return {
+      success: true,
+      message: 'Gender and gender interest retrieved successfully',
+      data,
+    };
+  }
+
   // PATCH /user/profile — update profile fields and/or picture (multipart/form-data)
   @UseGuards(AuthGuard)
   @Patch('profile')
