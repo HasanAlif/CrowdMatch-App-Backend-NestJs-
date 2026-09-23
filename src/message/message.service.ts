@@ -17,7 +17,7 @@ import {
   decideChatPermission,
 } from './message-copy';
 import { User } from '../user/schemas/user.schema';
-import { AccountStatus } from '../user/user.types';
+import { AccountStatus, Gender } from '../user/user.types';
 import {
   MatchedPair,
   PairOutcome,
@@ -458,6 +458,51 @@ export class MessageService {
       receiverDeleted: receiver?.accountStatus === AccountStatus.Deleted,
       outcome: pair?.outcome,
     });
+  }
+
+  // ── Chat partner profile ──
+  // Same access rule as messaging: mutual match, nobody blocked, not deleted.
+  async getUserProfileDetails(
+    requesterId: string,
+    targetId: string,
+  ): Promise<{
+    id: Types.ObjectId;
+    fullName: string | null;
+    picture: string | null;
+    age: number | null;
+    gender: Gender | null;
+    interestedInGenders: Gender | null;
+    minAgePreference: number | null;
+    maxAgePreference: number | null;
+    maxDistanceKm: number | null;
+  }> {
+    if (!Types.ObjectId.isValid(targetId)) {
+      throw new NotFoundException('User not found');
+    }
+
+    await this.assertCanChat(requesterId, targetId);
+
+    const user = await this.userModel
+      .findById(targetId)
+      .select(
+        'fullName picture age gender interestedInGenders minAgePreference maxAgePreference maxDistanceKm',
+      )
+      .lean()
+      .exec();
+
+    if (!user) throw new NotFoundException('User not found');
+
+    return {
+      id: user._id,
+      fullName: user.fullName ?? null,
+      picture: user.picture ?? null,
+      age: user.age ?? null,
+      gender: user.gender ?? null,
+      interestedInGenders: user.interestedInGenders ?? null,
+      minAgePreference: user.minAgePreference ?? null,
+      maxAgePreference: user.maxAgePreference ?? null,
+      maxDistanceKm: user.maxDistanceKm ?? null,
+    };
   }
 
   private async assertCanChat(

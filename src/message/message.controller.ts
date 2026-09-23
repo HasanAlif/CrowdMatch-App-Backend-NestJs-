@@ -25,7 +25,8 @@ import { ReportUserDto } from './dto/report-user.dto';
    5. POST /messages/block/:userId      ← static prefix "block"
    6. POST /messages/unblock/:userId    ← static prefix "unblock"
    7. POST /messages/report/:userId     ← static prefix "report"
-   8. GET  /messages/:userId            ← dynamic  ← MUST BE LAST
+   8. GET  /messages/profile/:userId    ← static prefix "profile"
+   9. GET  /messages/:userId            ← dynamic  ← MUST BE LAST
  */
 @UseGuards(AuthGuard)
 @Controller('messages')
@@ -166,7 +167,30 @@ export class MessageController {
     };
   }
 
-  // ── 8. GET /messages/:userId ── MUST REMAIN LAST ───
+  // ── 8. GET /messages/profile/:userId — matched chat partner's profile ──
+  @Get('profile/:userId')
+  async getUserProfileDetails(
+    @Param('userId') targetId: string,
+    @Request() req: any,
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: Awaited<ReturnType<MessageService['getUserProfileDetails']>>;
+  }> {
+    const userId = req.user.sub as string;
+    const data = await this.messageService.getUserProfileDetails(
+      userId,
+      targetId,
+    );
+
+    return {
+      success: true,
+      message: 'User profile retrieved successfully',
+      data,
+    };
+  }
+
+  // ── 9. GET /messages/:userId ── MUST REMAIN LAST ───
 
   /**
     GET /messages/:userId?page=1&limit=50
