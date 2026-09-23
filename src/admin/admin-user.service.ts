@@ -13,6 +13,7 @@ import { UserService } from 'src/user/user.service';
 import { AccountStatus, Role } from 'src/user/user.types';
 import { Match } from 'src/matching/schemas/match.schema';
 import { Vote, VoteType } from 'src/matching/schemas/vote.schema';
+import { Report, ReportReason } from 'src/message/schemas/report.schema';
 import { ActivityLogService } from 'src/activity-log/activity-log.service';
 import { escapeRegex } from 'src/common/regex';
 import { zonedDateKey } from 'src/common/dashboard-time';
@@ -23,6 +24,7 @@ import {
   UserStatusFilter,
 } from './dto/list-users-query.dto';
 import { UserStatusAction } from './dto/update-user-status.dto';
+import { ReportRecordsQueryDto } from './dto/report-records-query.dto';
 
 export const SEARCH_CANDIDATE_CAP = 500;
 
@@ -56,6 +58,48 @@ export interface UserStatusChangeResult {
   name: string | null;
   status: AccountStatus;
   isActive: boolean;
+}
+
+export interface ReportUserSummary {
+  id: string;
+  userId: string | null;
+  fullName: string | null;
+  picture: string | null;
+}
+
+export interface ReportRecordRow {
+  id: string;
+  reporterUser: ReportUserSummary | null;
+  reportedUser: ReportUserSummary | null;
+  reportReason: ReportReason;
+  details: string | null;
+  date: string | null;
+}
+
+export interface ReportRecordsResult {
+  records: ReportRecordRow[];
+  pagination: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
+interface LeanReportRow {
+  _id: Types.ObjectId;
+  reporter: Types.ObjectId;
+  reportedUser: Types.ObjectId;
+  reason: ReportReason;
+  details?: string | null;
+  createdAt?: Date | null;
+}
+
+interface LeanReportUserRow {
+  _id: Types.ObjectId;
+  displayId?: string | null;
+  fullName?: string | null;
+  picture?: string | null;
 }
 
 interface LeanUserRow {
@@ -93,12 +137,22 @@ const ROW_PROJECTION = {
   accountStatus: 1,
 } as const;
 
+const REPORT_RECORD_PROJECTION = {
+  _id: 1,
+  reporter: 1,
+  reportedUser: 1,
+  reason: 1,
+  details: 1,
+  createdAt: 1,
+} as const;
+
 @Injectable()
 export class AdminUserService {
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectModel(Vote.name) private readonly voteModel: Model<Vote>,
     @InjectModel(Match.name) private readonly matchModel: Model<Match>,
+    @InjectModel(Report.name) private readonly reportModel: Model<Report>,
     private readonly userService: UserService,
     private readonly activityLog: ActivityLogService,
   ) {}
@@ -257,6 +311,69 @@ export class AdminUserService {
     }
   }
 
+  // Report management
+  // GET /admin/reports
+  async getReportManagementData(
+    query: ReportRecordsQueryDto,
+  ): Promise<ReportRecordsResult> {
+    try {
+      const { page, limit } = query;
+
+      const [total, reports] = await Promise.all([
+        this.reportModel.estimatedDocumentCount().exec(),
+        this.reportModel
+          .find({})
+          .select(REPORT_RECORD_PROJECTION)
+          .sort({ createdAt: -1, _id: -1 })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .lean<LeanReportRow[]>()
+          .exec(),
+      ]);
+
+      const pagination = {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit) || 0,
+      };
+
+      if (reports.length === 0) return { records: [], pagination };
+
+      const userIds = [
+        ...new Set(
+          reports.flatMap((r) => [
+            r.reporter.toString(),
+            r.reportedUser.toString(),
+          ]),
+        ),
+      ].map((id) => new Types.ObjectId(id));
+
+      const users = await this.userModel
+        .find({ _id: { $in: userIds } })
+        .select({ _id: 1, displayId: 1, fullName: 1, picture: 1 })
+        .lean<LeanReportUserRow[]>()
+        .exec();
+
+      const userById = new Map(users.map((u) => [u._id.toString(), u]));
+
+      return {
+        records: reports.map((report) => ({
+          id: report._id.toString(),
+          reporterUser: this.reportUser(userById, report.reporter),
+          reportedUser: this.reportUser(userById, report.reportedUser),
+          reportReason: report.reason,
+          details: report.details ?? null,
+          date: report.createdAt ? zonedDateKey(report.createdAt) : null,
+        })),
+        pagination,
+      };
+    } catch (err) {
+      if ((err as { status?: number }).status) throw err;
+      throw new InternalServerErrorException('Failed to load reports');
+    }
+  }
+
   // Shared internals
   private statusFilter(status: UserStatusFilter): Record<string, unknown> {
     switch (status) {
@@ -383,6 +500,21 @@ export class AdminUserService {
       name: user.fullName ?? null,
       status: user.accountStatus,
       isActive: user.isActive,
+    };
+  }
+
+  private reportUser(
+    userById: Map<string, LeanReportUserRow>,
+    id: Types.ObjectId,
+  ): ReportUserSummary | null {
+    const user = userById.get(id.toString());
+    if (!user) return null;
+
+    return {
+      id: user._id.toString(),
+      userId: user.displayId ?? null,
+      fullName: user.fullName ?? null,
+      picture: user.picture ?? null,
     };
   }
 }

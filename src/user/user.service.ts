@@ -429,7 +429,7 @@ export class UserService {
     return await this.userModel
       .findById(userId)
       .select(
-        'picture fullName age interestedInGenders minAgePreference maxAgePreference maxDistanceKm',
+        'picture fullName age gender interestedInGenders minAgePreference maxAgePreference maxDistanceKm',
       )
       .lean()
       .exec();

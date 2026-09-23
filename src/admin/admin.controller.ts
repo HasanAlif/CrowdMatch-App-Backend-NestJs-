@@ -35,6 +35,7 @@ import { AdminVotingService } from './admin-voting.service';
 import { VoteRecordsQueryDto } from './dto/vote-records-query.dto';
 import { AdminMatchService } from './admin-match.service';
 import { MatchRecordsQueryDto } from './dto/match-records-query.dto';
+import { ReportRecordsQueryDto } from './dto/report-records-query.dto';
 
 @Controller('admin')
 @UseGuards(AuthGuard, RolesGuard)
@@ -312,6 +313,21 @@ export class AdminController {
         ? 'Match was already removed'
         : 'Match removed successfully',
       data,
+    };
+  }
+
+  // ── Report Management ──
+
+  // GET /admin/reports?page=1&limit=50 — user reports, newest first
+  @Get('reports')
+  async getReports(@Query() query: ReportRecordsQueryDto) {
+    const { records, pagination } =
+      await this.users.getReportManagementData(query);
+    return {
+      success: true,
+      message: 'Reports retrieved successfully',
+      data: records,
+      pagination,
     };
   }
 }

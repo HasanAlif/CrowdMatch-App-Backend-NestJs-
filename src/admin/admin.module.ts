@@ -12,6 +12,7 @@ import { AuthModule } from 'src/auth/auth.module';
 import { NotificationModule } from 'src/notification/notification.module';
 import { ActivityLogModule } from 'src/activity-log/activity-log.module';
 import { Vote, VoteSchema } from 'src/matching/schemas/vote.schema';
+import { Report, ReportSchema } from 'src/message/schemas/report.schema';
 
 @Module({
   imports: [
@@ -20,7 +21,10 @@ import { Vote, VoteSchema } from 'src/matching/schemas/vote.schema';
     NotificationModule,
     ActivityLogModule,
 
-    MongooseModule.forFeature([{ name: Vote.name, schema: VoteSchema }]),
+    MongooseModule.forFeature([
+      { name: Vote.name, schema: VoteSchema },
+      { name: Report.name, schema: ReportSchema },
+    ]),
   ],
   controllers: [AdminController],
   providers: [
