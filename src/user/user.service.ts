@@ -155,9 +155,16 @@ export class UserService {
   async upsertDevice(userId: string, device: ResolvedDevice) {
     const now = new Date();
 
+    const match = device.deviceId
+      ? { 'devices.deviceId': device.deviceId }
+      : { 'devices.fcmToken': device.fcmToken };
+    const notMatch = device.deviceId
+      ? { 'devices.deviceId': { $ne: device.deviceId } }
+      : { 'devices.fcmToken': { $ne: device.fcmToken } };
+
     const updated = await this.userModel
       .updateOne(
-        { _id: userId, 'devices.deviceId': device.deviceId },
+        { _id: userId, ...match },
         {
           $set: {
             'devices.$.fcmToken': device.fcmToken,
@@ -173,7 +180,7 @@ export class UserService {
 
     await this.userModel
       .updateOne(
-        { _id: userId, 'devices.deviceId': { $ne: device.deviceId } },
+        { _id: userId, ...notMatch },
         {
           $push: {
             devices: {

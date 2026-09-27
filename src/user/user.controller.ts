@@ -114,9 +114,7 @@ export class UserController {
   async registerDevice(@Body() dto: DeviceDto, @Request() req: any) {
     const device = resolveDevice(dto);
     if (!device) {
-      throw new BadRequestException(
-        'fcmToken, deviceId and platform are required',
-      );
+      throw new BadRequestException('fcmToken is required');
     }
 
     const userId = req.user.sub as string;

@@ -39,11 +39,11 @@ export class UserDevice {
   @Prop({ required: true })
   fcmToken: string;
 
-  @Prop({ required: true })
-  deviceId: string;
+  @Prop()
+  deviceId?: string;
 
-  @Prop({ type: String, enum: DevicePlatform, required: true })
-  platform: DevicePlatform;
+  @Prop({ type: String, enum: DevicePlatform })
+  platform?: DevicePlatform;
 
   @Prop()
   deviceName?: string;
